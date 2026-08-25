@@ -9,7 +9,7 @@ import Foundation
 import UIKit
 import idevice
 
-private enum IdeviceBridge {
+enum IdeviceBridge {
     static let processQueue = DispatchQueue(label: "com.stikdebug.processInspector", qos: .userInitiated)
 
     static func makeError(

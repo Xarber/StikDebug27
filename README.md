@@ -11,14 +11,14 @@
   <a href="https://discord.gg/ZnNcrRT3M8">
     <img src="https://img.shields.io/badge/Discord-join%20us-7289DA?logo=discord&logoColor=white&style=for-the-badge&labelColor=23272A" />
   </a>
-  <a href="https://github.com/StikDebug/StikDebug/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/StikDebug/StikDebug?label=License&color=5865F2&style=for-the-badge&labelColor=23272A" />
+  <a href="https://github.com/Xarber/StikDebug27/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/Xarber/StikDebug27?label=License&color=5865F2&style=for-the-badge&labelColor=23272A" />
   </a>
-  <a href="https://github.com/StikDebug/StikDebug/stargazers">
-    <img src="https://img.shields.io/github/stars/StikDebug/StikDebug?label=Stars&color=FEE75C&style=for-the-badge&labelColor=23272A" />
+  <a href="https://github.com/Xarber/StikDebug27/stargazers">
+    <img src="https://img.shields.io/github/stars/Xarber/StikDebug27?label=Stars&color=FEE75C&style=for-the-badge&labelColor=23272A" />
   </a>
-  <a href="https://github.com/StikDebug/StikDebug/releases">
-    <img src="https://img.shields.io/github/v/release/StikDebug/StikDebug?label=Latest&color=00BFFF&style=for-the-badge&labelColor=23272A" />
+  <a href="https://github.com/Xarber/StikDebug27/releases">
+    <img src="https://img.shields.io/github/v/release/Xarber/StikDebug27?label=Latest&color=00BFFF&style=for-the-badge&labelColor=23272A" />
   </a>
   <br />
 </h6>
@@ -37,16 +37,13 @@
 > [!NOTE]
 > **Notice:** StikDebug is no longer available on the App Store. Please use the official download methods below.
 
-<h3>
-<div align="center" style="display: flex; justify-content: center; align-items: center; gap: 16px; flex-wrap: wrap;">
-   <a href="https://altdirect.app/?url=https://stikdebug.xyz/index.json" target="_blank">
-     <img src="https://altdirect.app/assets/png/AltSource_Blue.png" alt="Add AltSource" width="200">
-   </a>
-   <a href="https://github.com/StikDebug/StikDebug/releases/download/3.1.9/StikDebug-3.1.9.ipa" target="_blank">
-     <img src="https://altdirect.app/assets/png/Download_Blue.png" alt="Download .ipa" width="200">
-   </a>
-</div>
-</h3>
+### StikDebug with Xcode 27
+<a href="https://altdirect.app/?url=https://github.com/Xarber/StikDebug27/releases/download/1.0/apps.json" target="_blank">
+   <img src="https://raw.githubusercontent.com/StikStore/altdirect/refs/heads/main/assets/png/AltSource_Blue.png" alt="Add AltSource" width="200"/>
+</a>
+<a href="https://github.com/Xarber/StikDebug27/releases/latest/download/StikDebug.ipa" target="_blank">
+   <img src="https://raw.githubusercontent.com/StikStore/altdirect/refs/heads/main/assets/png/Download_Blue.png" alt="Download .ipa" width="200"/>
+</a>
 
 ## Compatibility
 
@@ -112,7 +109,7 @@ StikDebug enables **JIT** for sideloaded apps on iOS 17.4+ without needing a com
 ### Steps
 1. **Clone the repo**
    ```bash
-   git clone https://github.com/StikDebug/StikDebug.git
+   git clone https://github.com/Xarber/StikDebug27.git
    cd StikDebug
    ```
 
@@ -159,6 +156,6 @@ To propose a new feature, open a feature request issue and provide:
 We appreciate your time and effort in helping improve this project.
 
 ## Code Help
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/StikDebug/stikdebug)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Xarber/StikDebug27)
 ## License
 StikDebug is licensed under **AGPL-3.0**. See [`LICENSE`](LICENSE) for details.

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F1D3E0A12F00000100F1D3E0 /* libidevice_ffi.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F1D3E0A02F00000100F1D3E0 /* libidevice_ffi.a */; };
 		68D569BE2E1B415700A5BA36 /* CodeEditorView in Frameworks */ = {isa = PBXBuildFile; productRef = 68D569BD2E1B415700A5BA36 /* CodeEditorView */; };
 		68D569C02E1B415700A5BA36 /* LanguageSupport in Frameworks */ = {isa = PBXBuildFile; productRef = 68D569BF2E1B415700A5BA36 /* LanguageSupport */; };
 /* End PBXBuildFile section */
@@ -42,6 +43,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F1D3E0A02F00000100F1D3E0 /* libidevice_ffi.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = StikDebug/idevice/libidevice_ffi.a; sourceTree = "<group>"; };
 		DC139F6D2DE97EA400F63846 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		DC139F6F2DE97EA400F63846 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		DC6F1D372D94EADD0071B2B6 /* StikDebug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StikDebug.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -54,6 +56,11 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				idevice/UPSTREAM.md,
+				idevice/assemble.sh,
+				idevice/libidevice_ffi.a,
+				idevice/libidevice_ffi.a.part-00,
+				idevice/libidevice_ffi.a.part-01,
 			);
 			target = DC6F1D362D94EADD0071B2B6 /* StikDebug */;
 		};
@@ -85,6 +92,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F1D3E0A12F00000100F1D3E0 /* libidevice_ffi.a in Frameworks */,
 				68D569C02E1B415700A5BA36 /* LanguageSupport in Frameworks */,
 				68D569BE2E1B415700A5BA36 /* CodeEditorView in Frameworks */,
 			);
@@ -133,6 +141,7 @@
 			children = (
 				DC139F6D2DE97EA400F63846 /* WidgetKit.framework */,
 				DC139F6F2DE97EA400F63846 /* SwiftUI.framework */,
+				F1D3E0A02F00000100F1D3E0 /* libidevice_ffi.a */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
