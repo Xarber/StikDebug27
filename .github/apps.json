@@ -1,0 +1,36 @@
+{
+  "name": "StikDebug",
+  "identifier": "com.xarber.stikdebug27.source",
+  "website": "https://github.com/Xarber/StikDebug27",
+  "subtitle": "StikDebug builds from Xarber/StikDebug27.",
+  "description": "On-device debugging and JIT tools for supported iOS devices.",
+  "tintColor": "#5865F2",
+  "iconURL": "https://raw.githubusercontent.com/Xarber/StikDebug27/main/assets/StikDebug.png",
+  "apps": [
+    {
+      "name": "StikDebug",
+      "bundleIdentifier": "com.stik.stikdebug",
+      "developerName": "Xarber",
+      "subtitle": "On-device debugging and JIT tools.",
+      "localizedDescription": "StikDebug builds from Xarber/StikDebug27.",
+      "iconURL": "https://raw.githubusercontent.com/Xarber/StikDebug27/main/assets/StikDebug.png",
+      "tintColor": "#5865F2",
+      "category": "utilities",
+      "screenshots": [
+        "https://raw.githubusercontent.com/Xarber/StikDebug27/main/assets/views/dark/HomeScreen.PNG"
+      ],
+      "versions": [],
+      "releaseChannels": [
+        {
+          "track": "stable",
+          "releases": []
+        },
+        {
+          "track": "nightly",
+          "releases": []
+        }
+      ]
+    }
+  ],
+  "news": []
+}
