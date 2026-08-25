@@ -117,6 +117,8 @@ def channel_map(app):
 
 
 def is_current_architecture(source):
+    if not isinstance(source, dict):
+        return False
     try:
         app = app_from(source)
     except RuntimeError:
