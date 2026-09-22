@@ -17,7 +17,7 @@ sdk_path=$(xcrun --sdk iphoneos --show-sdk-path)
 (
     cd "$source_root/ffi"
     SDKROOT="$sdk_path" \
-        RUSTFLAGS="-C link-arg=-L$sdk_path/usr/lib" \
+        RUSTFLAGS="-A dead_code -C link-arg=-L$sdk_path/usr/lib" \
         BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$sdk_path" \
         IPHONEOS_DEPLOYMENT_TARGET=17.0 \
         cargo build --release --target aarch64-apple-ios --features obfuscate

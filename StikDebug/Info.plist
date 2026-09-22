@@ -20,6 +20,7 @@
 	<array>
 		<string>_remoted._tcp</string>
 		<string>_remotepairing._tcp</string>
+		<string>_remotepairing-pairable-host._tcp</string>
 		<string>_stikdebug._tcp</string>
 		<string>_stikdebug._udp</string>
 	</array>

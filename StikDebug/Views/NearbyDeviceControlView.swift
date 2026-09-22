@@ -9,7 +9,10 @@ import UIKit
 struct NearbyDeviceControlView: View {
     @StateObject private var browser = NearbyDeviceBrowser()
     @StateObject private var controller = NearbyRemoteControlModel()
+    @StateObject private var pairing = RemotePairingCoordinator()
     @State private var isFullscreen = false
+    @State private var isShowingPairing = false
+    @State private var remoteKeyboardText = ""
 
     var body: some View {
         Group {
@@ -36,6 +39,12 @@ struct NearbyDeviceControlView: View {
         .fullScreenCover(isPresented: $isFullscreen) {
             RemoteFullscreenView(controller: controller, isPresented: $isFullscreen)
         }
+        .sheet(isPresented: $isShowingPairing, onDismiss: {
+            pairing.cancel()
+            browser.refresh()
+        }) {
+            RemotePairingView(pairing: pairing, isPresented: $isShowingPairing)
+        }
         .alert(
             "Nearby Control",
             isPresented: Binding(
@@ -51,10 +60,23 @@ struct NearbyDeviceControlView: View {
 
     private var discoveryView: some View {
         List {
-            Section {
-                Text("The other device must have Developer Mode enabled and its developer image mounted. Approve the pairing prompt on that device when asked.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            Section("Pair a Device") {
+                Button {
+                    browser.stop()
+                    isShowingPairing = true
+                    pairing.start()
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Pair New iPhone or iPad")
+                            Text("Make StikDebug appear as a Mac in Developer Mode")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "plus.circle.fill")
+                    }
+                }
             }
 
             Section("Nearby Devices") {
@@ -96,8 +118,8 @@ struct NearbyDeviceControlView: View {
             if controller.isConnecting {
                 VStack(spacing: 12) {
                     ProgressView()
-                    Text("Pairing and starting display control…")
-                    Text("Check the nearby device for a pairing prompt.")
+                    Text("Verifying pairing and starting control…")
+                    Text("Keep the other device awake and unlocked.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -138,6 +160,25 @@ struct NearbyDeviceControlView: View {
 
             RemoteHardwareControls(controller: controller)
 
+            HStack(spacing: 8) {
+                TextField("Type on remote device", text: $remoteKeyboardText)
+                    .textFieldStyle(.roundedBorder)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.send)
+                    .onSubmit(sendKeyboardText)
+                Button(action: sendKeyboardText) {
+                    Image(systemName: "paperplane.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(remoteKeyboardText.isEmpty)
+                Button { controller.backspace() } label: {
+                    Image(systemName: "delete.left")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Remote Backspace")
+            }
+
             Button("Disconnect", role: .destructive) {
                 controller.disconnect()
                 browser.refresh()
@@ -155,6 +196,147 @@ struct NearbyDeviceControlView: View {
             controller.drag(from: (start.x, start.y), to: (end.x, end.y))
         }
     }
+
+    private func sendKeyboardText() {
+        let text = remoteKeyboardText
+        remoteKeyboardText = ""
+        controller.type(text)
+    }
+}
+
+private struct RemotePairingView: View {
+    @ObservedObject var pairing: RemotePairingCoordinator
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 24) {
+                    Image(systemName: icon)
+                        .font(.system(size: 52, weight: .medium))
+                        .foregroundStyle(iconColor)
+                        .padding(.top, 12)
+
+                    Text(title)
+                        .font(.title2.bold())
+                        .multilineTextAlignment(.center)
+
+                    content
+                }
+                .padding(24)
+                .frame(maxWidth: 560)
+                .frame(maxWidth: .infinity)
+            }
+            .navigationTitle("Pair Device")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(pairing.isActive ? "Cancel" : "Close") {
+                        pairing.cancel()
+                        isPresented = false
+                    }
+                }
+            }
+        }
+        .interactiveDismissDisabled(pairing.isActive)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch pairing.phase {
+        case .idle, .preparing:
+            ProgressView("Preparing secure pairing…")
+                .controlSize(.large)
+
+        case .advertising:
+            VStack(alignment: .leading, spacing: 18) {
+                Text("On the device you want to control:")
+                    .font(.headline)
+                pairingStep(1, "Open Settings.")
+                pairingStep(2, "Choose Privacy & Security, then Developer Mode.")
+                pairingStep(3, "Under Other Devices, choose Pair with StikDebug.")
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("Waiting for the other device…")
+                }
+                .foregroundStyle(.secondary)
+                .padding(.top, 8)
+            }
+
+        case .waitingForCode(let code):
+            VStack(spacing: 16) {
+                Text("Enter this code on the other device:")
+                    .foregroundStyle(.secondary)
+                Text(code.map(String.init).joined(separator: " "))
+                    .font(.system(.largeTitle, design: .monospaced, weight: .bold))
+                    .tracking(2)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 18)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 18))
+            }
+
+        case .saving:
+            ProgressView("Saving trusted device identity…")
+                .controlSize(.large)
+
+        case .completed(let message):
+            VStack(spacing: 18) {
+                Text(message)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Done") { isPresented = false }
+                    .buttonStyle(.borderedProminent)
+            }
+
+        case .failed(let message):
+            VStack(spacing: 18) {
+                Text(message)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Try Again") { pairing.start() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private var title: String {
+        switch pairing.phase {
+        case .idle, .preparing: return "Preparing Pairing"
+        case .advertising: return "Ready on This Device"
+        case .waitingForCode: return "Confirm Pairing"
+        case .saving: return "Finishing Pairing"
+        case .completed: return "Device Paired"
+        case .failed: return "Pairing Failed"
+        }
+    }
+
+    private var icon: String {
+        switch pairing.phase {
+        case .completed: return "checkmark.circle.fill"
+        case .failed: return "exclamationmark.triangle.fill"
+        case .waitingForCode: return "number.circle.fill"
+        default: return "iphone.gen3.radiowaves.left.and.right"
+        }
+    }
+
+    private var iconColor: Color {
+        switch pairing.phase {
+        case .completed: return .green
+        case .failed: return .orange
+        default: return .accentColor
+        }
+    }
+
+    private func pairingStep(_ number: Int, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+            Text("\(number)")
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(Color.accentColor, in: Circle())
+            Text(text)
+        }
+    }
 }
 
 private struct RemoteHardwareControls: View {
@@ -169,6 +351,9 @@ private struct RemoteHardwareControls: View {
             Menu {
                 Button { controller.press(.mute) } label: { Label("Mute", systemImage: "speaker.slash") }
                 Button { controller.press(.siri) } label: { Label("Siri", systemImage: "waveform.circle") }
+                Divider()
+                Button { controller.rotate(.left) } label: { Label("Rotate Left", systemImage: "rotate.left") }
+                Button { controller.rotate(.right) } label: { Label("Rotate Right", systemImage: "rotate.right") }
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .frame(maxWidth: .infinity)

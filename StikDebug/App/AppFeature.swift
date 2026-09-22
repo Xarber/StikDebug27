@@ -9,6 +9,7 @@ enum AppFeature: String, CaseIterable, Identifiable {
     case home
     case scripts
     case tools
+    case devices
     case console
     case deviceInfo = "deviceinfo"
     case profiles
@@ -29,6 +30,8 @@ enum AppFeature: String, CaseIterable, Identifiable {
             return "Scripts"
         case .tools:
             return "Tools"
+        case .devices:
+            return "Devices"
         case .console:
             return "Console"
         case .deviceInfo:
@@ -54,6 +57,8 @@ enum AppFeature: String, CaseIterable, Identifiable {
             return "Manage and run JS scripts"
         case .tools:
             return "Access additional tools"
+        case .devices:
+            return "Pair, view, and control nearby devices"
         case .console:
             return "Live device logs"
         case .deviceInfo:
@@ -90,6 +95,8 @@ enum AppFeature: String, CaseIterable, Identifiable {
             return "scroll"
         case .tools:
             return "wrench.and.screwdriver"
+        case .devices:
+            return "iphone.gen3.radiowaves.left.and.right"
         case .console:
             return "terminal"
         case .deviceInfo:
@@ -116,6 +123,8 @@ enum AppFeature: String, CaseIterable, Identifiable {
             ScriptListView()
         case .tools:
             ToolsView()
+        case .devices:
+            NavigationStack { NearbyDeviceControlView() }
         case .console:
             ConsoleLogsView()
         case .deviceInfo:
@@ -135,6 +144,6 @@ enum AppFeature: String, CaseIterable, Identifiable {
 }
 
 extension AppFeature {
-    static let mainTabs: [AppFeature] = [.home, .tools, .settings]
+    static let mainTabs: [AppFeature] = [.home, .tools, .devices, .settings]
     static let toolList: [AppFeature] = [.scripts, .console, .deviceInfo, .profiles, .processes, .location, .advancedTools]
 }
