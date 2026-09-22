@@ -7485,19 +7485,12 @@ struct IdeviceFfiError *idevice_provider_get_pairing_file(struct IdeviceProvider
                                                           struct IdevicePairingFile **pairing_file);
 
 /**
- * Opens the screenshot, display-stream, touchscreen and hardware-button services.
+ * Opens the display-stream, touchscreen and hardware-button services.
  * The caller must keep `adapter` and `handshake` alive until this handle is freed.
  */
 struct IdeviceFfiError *remote_control_client_connect_rsd(struct AdapterHandle *adapter,
                                                           struct RsdHandshakeHandle *handshake,
                                                           struct RemoteControlClientHandle **out_handle);
-
-/**
- * Captures a JPEG frame. Free the returned bytes with `idevice_data_free`.
- */
-struct IdeviceFfiError *remote_control_client_take_frame(struct RemoteControlClientHandle *handle,
-                                                         uint8_t **out_data,
-                                                         uintptr_t *out_len);
 
 /**
  * Receives one complete marker-closed HEVC access unit in Annex-B framing.
@@ -7509,6 +7502,14 @@ struct IdeviceFfiError *remote_control_client_next_video_access_unit(struct Remo
                                                                      uint8_t **out_data,
                                                                      uintptr_t *out_len,
                                                                      uint32_t *out_timestamp);
+
+/**
+ * Returns whether a Bonjour remote-pairing authTag belongs to this pairing file.
+ */
+struct IdeviceFfiError *remote_control_pairing_matches_service(struct RpPairingFileHandle *pairing_file,
+                                                               const char *service_identifier,
+                                                               const char *auth_tag,
+                                                               bool *out_matches);
 
 /**
  * Sends a tap in normalized coordinates, where each axis is 0...65535.

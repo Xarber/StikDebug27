@@ -14,11 +14,19 @@ struct RemotePairingRecord: Codable, Identifiable, Equatable {
     var lastConnectedAt: Date?
 }
 
+struct RemotePairingMatch: Equatable {
+    let record: RemotePairingRecord
+    let pairingFileURL: URL
+}
+
 enum RemotePairingStore {
     private static let lock = NSLock()
     private static let metadataFileName = "records.json"
 
     static func pairingFileURLs(preferredFor device: NearbyDevelopmentDevice? = nil) throws -> [URL] {
+        if let pairingFileURL = device?.pairingFileURL {
+            return [pairingFileURL]
+        }
         lock.lock()
         defer { lock.unlock() }
 
@@ -36,6 +44,44 @@ enum RemotePairingStore {
             let url = directory.appendingPathComponent(record.pairingFileName)
             return FileManager.default.fileExists(atPath: url.path) ? url : nil
         }
+    }
+
+    static func matchingRecord(
+        serviceIdentifier: String,
+        authenticationTags: [String]
+    ) throws -> RemotePairingMatch? {
+        guard !authenticationTags.isEmpty else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+
+        let directory = try storageDirectory()
+        for record in try loadRecords(in: directory) {
+            let url = directory.appendingPathComponent(record.pairingFileName)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            var pairingFile: OpaquePointer?
+            guard url.path.withCString({ rp_pairing_file_read($0, &pairingFile) }) == nil,
+                  let pairingFile else { continue }
+            defer { rp_pairing_file_free(pairingFile) }
+
+            for tag in authenticationTags {
+                var matches = false
+                let error = serviceIdentifier.withCString { identifier in
+                    tag.withCString { tag in
+                        remote_control_pairing_matches_service(
+                            pairingFile,
+                            identifier,
+                            tag,
+                            &matches
+                        )
+                    }
+                }
+                if let error { idevice_error_free(error) }
+                if matches {
+                    return RemotePairingMatch(record: record, pairingFileURL: url)
+                }
+            }
+        }
+        return nil
     }
 
     static func save(
@@ -83,7 +129,7 @@ enum RemotePairingStore {
             return
         }
         records[index].displayName = device.name
-        records[index].serviceIdentifier = device.id
+        records[index].serviceIdentifier = device.serviceIdentifier
         records[index].lastConnectedAt = Date()
         try saveRecords(records, in: directory)
     }

@@ -1,13 +1,18 @@
-use std::{ptr::null_mut, sync::Mutex, time::Duration};
+use std::{
+    ffi::{CStr, c_char},
+    ptr::null_mut,
+    sync::Mutex,
+    time::Duration,
+};
 
 use idevice::{
     IdeviceError, ReadWrite, RsdService,
     core_device::{
-        ButtonState, CallInfoBlob, DisplayServiceClient, HevcDepacketizer, ImageFormat,
-        IndigoHidClient, KeyboardUsage, MainKeyboardService, OrientationServiceClient,
-        RotationDirection, RtpPacket, ScreenCaptureServiceClient, TOUCHSCREEN_STATE_CONTACT,
-        TOUCHSCREEN_STATE_RELEASE, UniversalHidServiceClient, build_screen_audio_offer,
-        build_screen_video_offer, build_start_audio_parameters, build_start_video_parameters,
+        ButtonState, CallInfoBlob, DisplayServiceClient, HevcDepacketizer, IndigoHidClient,
+        KeyboardUsage, MainKeyboardService, OrientationServiceClient, RotationDirection, RtpPacket,
+        TOUCHSCREEN_STATE_CONTACT, TOUCHSCREEN_STATE_RELEASE, UniversalHidServiceClient,
+        build_screen_audio_offer, build_screen_video_offer, build_start_audio_parameters,
+        build_start_video_parameters,
     },
     tcp::handle::UdpSocketHandle,
 };
@@ -22,7 +27,6 @@ const CLIENT_SUPPORTED_FEATURES: u64 = 140;
 
 /// Owns the CoreDevice clients needed to view and control one paired device.
 pub struct RemoteControlClientHandle {
-    screenshot: Mutex<ScreenCaptureServiceClient<Box<dyn ReadWrite>>>,
     universal_hid: Mutex<RemoteUniversalHidState>,
     buttons: Mutex<IndigoHidClient<Box<dyn ReadWrite>>>,
     orientation: Mutex<OrientationServiceClient<Box<dyn ReadWrite>>>,
@@ -103,7 +107,7 @@ async fn start_screen_media_session(
     })
 }
 
-/// Opens the screenshot, display-stream, touchscreen and hardware-button services.
+/// Opens the display-stream, touchscreen and hardware-button services.
 /// The caller must keep `adapter` and `handshake` alive until this handle is freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remote_control_client_connect_rsd(
@@ -119,7 +123,6 @@ pub unsafe extern "C" fn remote_control_client_connect_rsd(
         let adapter = unsafe { &mut (*adapter).0 };
         let handshake = unsafe { &mut (*handshake).0 };
 
-        let screenshot = ScreenCaptureServiceClient::connect_rsd(adapter, handshake).await?;
         let media = start_screen_media_session(adapter, handshake).await?;
         let mut universal_hid = UniversalHidServiceClient::connect_rsd(adapter, handshake).await?;
         let keyboard = universal_hid.create_main_keyboard().await.ok();
@@ -127,7 +130,6 @@ pub unsafe extern "C" fn remote_control_client_connect_rsd(
         let orientation = OrientationServiceClient::connect_rsd(adapter, handshake).await?;
 
         Ok(RemoteControlClientHandle {
-            screenshot: Mutex::new(screenshot),
             universal_hid: Mutex::new(RemoteUniversalHidState {
                 client: universal_hid,
                 keyboard,
@@ -146,40 +148,6 @@ pub unsafe extern "C" fn remote_control_client_connect_rsd(
     match result {
         Ok(handle) => {
             unsafe { *out_handle = Box::into_raw(Box::new(handle)) };
-            null_mut()
-        }
-        Err(error) => ffi_err!(error),
-    }
-}
-
-/// Captures a JPEG frame. Free the returned bytes with `idevice_data_free`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remote_control_client_take_frame(
-    handle: *mut RemoteControlClientHandle,
-    out_data: *mut *mut u8,
-    out_len: *mut usize,
-) -> *mut IdeviceFfiError {
-    if handle.is_null() || out_data.is_null() || out_len.is_null() {
-        return ffi_err!(IdeviceError::FfiInvalidArg);
-    }
-
-    let handle = unsafe { &*handle };
-    let mut client = match handle.screenshot.lock() {
-        Ok(client) => client,
-        Err(_) => {
-            return ffi_err!(IdeviceError::InternalError(
-                "screenshot client lock poisoned".into()
-            ));
-        }
-    };
-    match run_sync_local(client.take_screenshot(None, ImageFormat::Jpeg)) {
-        Ok(frame) => {
-            let mut frame = frame.into_boxed_slice();
-            unsafe {
-                *out_data = frame.as_mut_ptr();
-                *out_len = frame.len();
-            }
-            std::mem::forget(frame);
             null_mut()
         }
         Err(error) => ffi_err!(error),
@@ -218,7 +186,9 @@ pub unsafe extern "C" fn remote_control_client_next_video_access_unit(
     let timeout = Duration::from_millis(timeout_ms.max(1));
 
     loop {
-        let datagram = match run_sync_local(tokio::time::timeout(timeout, video.socket.recv())) {
+        let datagram = match run_sync_local(async {
+            tokio::time::timeout(timeout, video.socket.recv()).await
+        }) {
             Ok(Ok(datagram)) => datagram,
             Ok(Err(error)) => return ffi_err!(IdeviceError::Socket(error)),
             Err(_) => return null_mut(),
@@ -251,6 +221,41 @@ pub unsafe extern "C" fn remote_control_client_next_video_access_unit(
         std::mem::forget(bytes);
         return null_mut();
     }
+}
+
+/// Returns whether a Bonjour remote-pairing authTag belongs to this pairing file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remote_control_pairing_matches_service(
+    pairing_file: *mut crate::rp_pairing_file::RpPairingFileHandle,
+    service_identifier: *const c_char,
+    auth_tag: *const c_char,
+    out_matches: *mut bool,
+) -> *mut IdeviceFfiError {
+    if pairing_file.is_null()
+        || service_identifier.is_null()
+        || auth_tag.is_null()
+        || out_matches.is_null()
+    {
+        return ffi_err!(IdeviceError::FfiInvalidArg);
+    }
+    let service_identifier = match unsafe { CStr::from_ptr(service_identifier) }.to_str() {
+        Ok(value) => value,
+        Err(_) => return ffi_err!(IdeviceError::FfiInvalidString),
+    };
+    let auth_tag = match unsafe { CStr::from_ptr(auth_tag) }.to_str() {
+        Ok(value) => value,
+        Err(_) => return ffi_err!(IdeviceError::FfiInvalidString),
+    };
+    let pairing_file = unsafe { &(*pairing_file).0 };
+    let matches = pairing_file.alt_irk().is_some_and(|alternate_irk| {
+        idevice::remote_pairing::PeerDevice::validate_auth_tag(
+            alternate_irk,
+            service_identifier,
+            auth_tag,
+        )
+    });
+    unsafe { *out_matches = matches };
+    null_mut()
 }
 
 /// Sends a tap in normalized coordinates, where each axis is 0...65535.

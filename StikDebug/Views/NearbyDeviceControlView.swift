@@ -96,10 +96,13 @@ struct NearbyDeviceControlView: View {
                                 Label {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(device.name).foregroundStyle(.primary)
-                                        Text("Remote pairing").font(.caption).foregroundStyle(.secondary)
+                                        Text(device.isPaired ? "Paired • Screen and all StikDebug tools" : "Not paired with StikDebug")
+                                            .font(.caption)
+                                            .foregroundStyle(device.isPaired ? .green : .secondary)
                                     }
                                 } icon: {
-                                    Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+                                    Image(systemName: device.isPaired ? "checkmark.circle.fill" : "iphone.gen3.radiowaves.left.and.right")
+                                        .foregroundStyle(device.isPaired ? .green : .secondary)
                                 }
                                 Spacer()
                                 if controller.isConnecting {
@@ -109,7 +112,7 @@ struct NearbyDeviceControlView: View {
                                 }
                             }
                         }
-                        .disabled(controller.isConnecting)
+                        .disabled(controller.isConnecting || !device.isPaired)
                     }
                 }
             }
@@ -118,10 +121,11 @@ struct NearbyDeviceControlView: View {
             if controller.isConnecting {
                 VStack(spacing: 12) {
                     ProgressView()
-                    Text("Verifying pairing and starting control…")
-                    Text("Keep the other device awake and unlocked.")
+                    Text("Connecting to the remote device…")
+                    Text("Enabling every StikDebug tool and starting screen mirroring. Keep the other device awake and unlocked.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
                 .padding(24)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
@@ -153,7 +157,7 @@ struct NearbyDeviceControlView: View {
                 .buttonStyle(.borderedProminent)
             }
 
-            Label("All StikDebug tools now target this device", systemImage: "checkmark.circle.fill")
+            Label("Remote target active: every StikDebug tool now uses this device", systemImage: "checkmark.circle.fill")
                 .font(.footnote)
                 .foregroundStyle(.green)
                 .frame(maxWidth: .infinity, alignment: .leading)

@@ -9,12 +9,17 @@ import Darwin
 import idevice
 
 struct NearbyDevelopmentDevice: Identifiable, Equatable {
+    let discoveryID: String
     let name: String
     let type: String
     let domain: String
+    let serviceIdentifier: String
     let addresses: [Data]
+    let pairingRecordID: UUID?
+    let pairingFileURL: URL?
 
-    var id: String { "\(name)|\(type)|\(domain)" }
+    var id: String { pairingRecordID?.uuidString ?? discoveryID }
+    var isPaired: Bool { pairingFileURL != nil }
 }
 
 final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDelegate, NetServiceDelegate {
@@ -23,6 +28,7 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
 
     private let browser = NetServiceBrowser()
     private var services: [String: NetService] = [:]
+    private var resolvedDevices: [String: NearbyDevelopmentDevice] = [:]
 
     override init() {
         super.init()
@@ -43,6 +49,7 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
     func refresh() {
         stop()
         services.removeAll()
+        resolvedDevices.removeAll()
         devices.removeAll()
         start()
     }
@@ -74,28 +81,83 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
         let id = serviceID(service)
         services[id] = nil
         DispatchQueue.main.async {
-            self.devices.removeAll { $0.id == id }
+            self.resolvedDevices[id] = nil
+            self.publishResolvedDevices()
         }
     }
 
     func netServiceDidResolveAddress(_ sender: NetService) {
         guard let addresses = sender.addresses, !addresses.isEmpty else { return }
+        let discoveryID = serviceID(sender)
+        let txt = Self.remotePairingTXT(from: sender.txtRecordData())
+        let serviceIdentifier = txt.identifier ?? sender.name
+        let pairingMatch = try? RemotePairingStore.matchingRecord(
+            serviceIdentifier: serviceIdentifier,
+            authenticationTags: txt.authenticationTags
+        )
         let device = NearbyDevelopmentDevice(
-            name: sender.name,
+            discoveryID: discoveryID,
+            name: pairingMatch?.record.displayName ?? "Unpaired Device",
             type: sender.type,
             domain: sender.domain,
-            addresses: addresses
+            serviceIdentifier: serviceIdentifier,
+            addresses: addresses,
+            pairingRecordID: pairingMatch?.record.id,
+            pairingFileURL: pairingMatch?.pairingFileURL
         )
 
         DispatchQueue.main.async {
-            self.devices.removeAll { $0.id == device.id }
-            self.devices.append(device)
-            self.devices.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            self.resolvedDevices[discoveryID] = device
+            self.publishResolvedDevices()
         }
     }
 
     private func serviceID(_ service: NetService) -> String {
         "\(service.name)|\(service.type)|\(service.domain)"
+    }
+
+    private func publishResolvedDevices() {
+        devices = Dictionary(grouping: resolvedDevices.values, by: \.id).values.compactMap { matches in
+            guard let first = matches.first else { return nil }
+            let addresses = matches.flatMap(\.addresses).reduce(into: [Data]()) { result, address in
+                if !result.contains(address) { result.append(address) }
+            }
+            return NearbyDevelopmentDevice(
+                discoveryID: first.discoveryID,
+                name: first.name,
+                type: first.type,
+                domain: first.domain,
+                serviceIdentifier: first.serviceIdentifier,
+                addresses: addresses,
+                pairingRecordID: first.pairingRecordID,
+                pairingFileURL: first.pairingFileURL
+            )
+        }.sorted {
+            if $0.isPaired != $1.isPaired { return $0.isPaired }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+
+    private static func remotePairingTXT(from data: Data?) -> (identifier: String?, authenticationTags: [String]) {
+        guard let data else { return (nil, []) }
+        let bytes = [UInt8](data)
+        var index = 0
+        var identifier: String?
+        var tags: [String] = []
+        while index < bytes.count {
+            let length = Int(bytes[index])
+            index += 1
+            guard length > 0, index + length <= bytes.count else { break }
+            let entry = Data(bytes[index ..< index + length])
+            index += length
+            guard let text = String(data: entry, encoding: .utf8),
+                  let separator = text.firstIndex(of: "=") else { continue }
+            let key = String(text[..<separator])
+            let value = String(text[text.index(after: separator)...])
+            if key == "identifier" { identifier = value }
+            if key == "authTag" { tags.append(value) }
+        }
+        return (identifier, tags)
     }
 }
 
@@ -164,6 +226,9 @@ final class RemoteDeviceSession: @unchecked Sendable {
 
     static func connect(to device: NearbyDevelopmentDevice) throws -> RemoteDeviceSession {
         let hostName = "StikDebug-\(UIDevice.current.name)"
+        guard device.isPaired else {
+            throw IdeviceBridge.makeError(message: "This nearby device is not paired with StikDebug")
+        }
         let pairingURLs = try RemotePairingStore.pairingFileURLs(preferredFor: device)
         guard !pairingURLs.isEmpty else {
             throw IdeviceBridge.makeError(
@@ -252,26 +317,6 @@ final class RemoteDeviceSession: @unchecked Sendable {
         }
 
         throw lastError ?? IdeviceBridge.makeError(message: "No reachable address was found for \(device.name)")
-    }
-
-    func takeFrame() throws -> UIImage {
-        try withController { controller in
-            var bytes: UnsafeMutablePointer<UInt8>?
-            var length = 0
-            if let error = remote_control_client_take_frame(controller, &bytes, &length) {
-                throw IdeviceBridge.consumeFFIError(error, fallback: "Unable to capture the remote display")
-            }
-            guard let bytes, length > 0 else {
-                throw IdeviceBridge.makeError(message: "The remote device returned an empty frame")
-            }
-            defer { idevice_data_free(bytes, UInt(length)) }
-
-            let data = Data(bytes: bytes, count: length)
-            guard let image = UIImage(data: data) else {
-                throw IdeviceBridge.makeError(message: "The remote frame was not a valid image")
-            }
-            return image
-        }
     }
 
     func nextVideoAccessUnit(timeoutMilliseconds: UInt64 = 500) throws -> VideoAccessUnit? {
@@ -472,9 +517,7 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
                 let oldSession = self.replaceSession(with: newSession)
                 self.videoQueue.async { oldSession?.close() }
                 self.startVideoStream(for: newSession)
-                let firstFrame = try? newSession.takeFrame()
                 DispatchQueue.main.async {
-                    if let firstFrame { self.frame = firstFrame }
                     self.connectedDeviceName = device.name
                     self.isConnecting = false
                 }
