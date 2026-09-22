@@ -7,7 +7,7 @@ import SwiftUI
 import UIKit
 
 private enum SettingsLinks {
-    static let githubStars = URL(string: "https://github.com/StikDebug/StikDebug/stargazers")!
+    static let githubStars = URL(string: "https://github.com/Xarber/StikDebug27/stargazers")!
     static let pairingFileGuide = URL(string: "https://github.com/StikDebug/StikDebug-Guide/blob/main/pairing_file.md")!
     static let localDevVPN = URL(string: "https://apps.apple.com/us/app/localdevvpn/id6755608044")!
     static let discord = URL(string: "https://discord.gg/qahjXNTDwS")!

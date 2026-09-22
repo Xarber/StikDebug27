@@ -116,6 +116,18 @@ struct ConsoleLogsView: View {
                 systemLogStream.lastError = nil
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .deviceTargetChanged)) { _ in
+            systemLogStream.stop()
+            systemLogStream.clear()
+            if selectedConsoleTab == .syslog {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(750))
+                    if selectedConsoleTab == .syslog {
+                        systemLogStream.start()
+                    }
+                }
+            }
+        }
     }
     
     private var jitLogsPane: some View {

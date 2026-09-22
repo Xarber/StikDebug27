@@ -141,7 +141,7 @@ struct DeviceInfoView: View {
     @State private var showShareSheet = false
     @State private var justCopied = false
 
-    private var pairingURL: URL { PairingFileStore.prepareURL() }
+    private var pairingURL: URL { DeviceConnectionContext.current.pairingFileURL }
     private var isPaired: Bool { FileManager.default.fileExists(atPath: pairingURL.path) }
 
     @State private var searchText = ""
@@ -289,6 +289,10 @@ struct DeviceInfoView: View {
             }
             .onAppear { if isPaired { mgr.initAndLoad() } }
             .onDisappear { mgr.cleanup() }
+            .onReceive(NotificationCenter.default.publisher(for: .deviceTargetChanged)) { _ in
+                mgr.cleanup()
+                if isPaired { mgr.initAndLoad() }
+            }
             .onChange(of: mgr.error?.message) { _, _ in
                 if let err = mgr.error {
                     fail(err.title, err.message)

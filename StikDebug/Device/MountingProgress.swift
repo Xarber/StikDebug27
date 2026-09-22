@@ -18,6 +18,11 @@ final class MountingProgress: ObservableObject {
 
     private init() {}
 
+    func resetForTargetChange() {
+        mountProgress = 0
+        coolisMounted = false
+    }
+
     func checkforMounted() {
         guard TunnelManager.shared.isConnected else { return }
 
@@ -103,7 +108,7 @@ final class MountingProgress: ObservableObject {
 }
 
 func isPairing() -> Bool {
-    let pairingPath = PairingFileStore.prepareURL().path
+    let pairingPath = DeviceConnectionContext.current.pairingFileURL.path
     var pairingFile: RpPairingFileHandle?
     let error = rp_pairing_file_read(pairingPath, &pairingFile)
     if error != nil {

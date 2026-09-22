@@ -28,7 +28,7 @@ final class TunnelManager: ObservableObject {
             return
         }
 
-        let pairingFileURL = PairingFileStore.prepareURL()
+        let pairingFileURL = DeviceConnectionContext.current.pairingFileURL
         guard FileManager.default.fileExists(atPath: pairingFileURL.path) else {
             isConnected = false
             return
@@ -134,12 +134,13 @@ func markTunnelDisconnected() {
 }
 
 private func tunnelConnectionLogMessage(for error: NSError) -> String {
-    let target = "\(DeviceConnectionContext.targetIPAddress):49152"
+    let target = DeviceConnectionContext.current.displayName
     return "Tunnel connection failed for \(target): \(error.localizedDescription) (Domain: \(error.domain), Code: \(error.code), Raw: \(String(describing: error)))"
 }
 
 private func tunnelConnectionAlertMessage(for error: NSError) -> String {
-    let targetIP = DeviceConnectionContext.targetIPAddress
+    let target = DeviceConnectionContext.current
+    let targetDescription = target.isRemote ? target.displayName : DeviceConnectionContext.targetIPAddress
     let rawMessage = error.localizedDescription
     let lowercasedMessage = rawMessage.lowercased()
 
@@ -173,7 +174,7 @@ private func tunnelConnectionAlertMessage(for error: NSError) -> String {
         recoverySteps = [
             "Confirm Wi-Fi and LocalDevVPN are both connected.",
             "Wake and unlock the target device.",
-            "Confirm LocalDevVPN is exposing the device at \(targetIP)."
+            "Confirm the selected device is reachable at \(targetDescription)."
         ]
     } else if lowercasedMessage.contains("network is unreachable") || lowercasedMessage.contains("no route") {
         likelyCause = "The VPN route to the device is not available."
@@ -198,8 +199,8 @@ private func tunnelConnectionAlertMessage(for error: NSError) -> String {
     return """
     \(likelyCause)
 
-    Target: \(targetIP):49152
-    Expected LocalDevVPN IP: \(DeviceConnectionContext.defaultTargetIPAddress)
+    Target: \(targetDescription)
+    \(target.isRemote ? "Nearby device connection" : "Expected LocalDevVPN IP: \(DeviceConnectionContext.defaultTargetIPAddress)")
 
     Try this:
     \(steps)

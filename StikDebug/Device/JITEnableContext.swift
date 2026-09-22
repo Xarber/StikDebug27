@@ -51,6 +51,7 @@ final class JITEnableContext {
     private struct TunnelHandles {
         var adapter: OpaquePointer?
         var handshake: OpaquePointer?
+        var targetID: String?
 
         mutating func free() {
             if let handshake {
@@ -61,11 +62,13 @@ final class JITEnableContext {
                 adapter_free(adapter)
                 self.adapter = nil
             }
+            targetID = nil
         }
     }
 
     private var adapter: OpaquePointer?
     private var handshake: OpaquePointer?
+    private var connectedTargetID: String?
 
     private let tunnelLock = NSLock()
     private var tunnelConnecting = false
@@ -144,8 +147,7 @@ final class JITEnableContext {
         logger?(message)
     }
 
-    private func getPairingFile() throws -> OpaquePointer {
-        let pairingFileURL = PairingFileStore.prepareURL()
+    private func getPairingFile(at pairingFileURL: URL) throws -> OpaquePointer {
 
         guard FileManager.default.fileExists(atPath: pairingFileURL.path) else {
             throw makeError("Pairing file not found!", code: -17)
@@ -168,26 +170,19 @@ final class JITEnableContext {
     }
 
     private func createTunnel(hostname: String) throws -> TunnelHandles {
-        let pairingFile = try getPairingFile()
+        let target = DeviceConnectionContext.current
+        let pairingFile = try getPairingFile(at: target.pairingFileURL)
         defer { rp_pairing_file_free(pairingFile) }
 
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = in_port_t(49152).bigEndian
-
-        let deviceIP = DeviceConnectionContext.targetIPAddress
-        let parseResult = deviceIP.withCString { inet_pton(AF_INET, $0, &addr.sin_addr) }
-        guard parseResult == 1 else {
-            throw makeError("Failed to parse target IP address.", code: -18)
-        }
-
-        var tunnel = TunnelHandles()
-        let ffiError = hostname.withCString { hostname in
-            withUnsafePointer(to: &addr) { pointer in
-                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        var lastError: NSError?
+        for address in target.addresses {
+            var tunnel = TunnelHandles()
+            let ffiError = address.withUnsafeBytes { buffer -> UnsafeMutablePointer<IdeviceFfiError>? in
+                guard let baseAddress = buffer.baseAddress else { return nil }
+                return hostname.withCString { hostname in
                     tunnel_create_rppairing(
-                        $0,
-                        socklen_t(MemoryLayout<sockaddr_in>.stride),
+                        baseAddress.assumingMemoryBound(to: sockaddr.self),
+                        socklen_t(buffer.count),
                         hostname,
                         pairingFile,
                         nil,
@@ -197,19 +192,19 @@ final class JITEnableContext {
                     )
                 }
             }
-        }
 
-        if let ffiError {
-            throw error(from: ffiError, fallback: "Failed to create tunnel")
+            if let ffiError {
+                lastError = error(from: ffiError, fallback: "Failed to connect to \(target.displayName)")
+                tunnel.free()
+                continue
+            }
+            if tunnel.adapter != nil, tunnel.handshake != nil {
+                tunnel.targetID = target.id
+                return tunnel
+            }
+            tunnel.free()
         }
-
-        guard tunnel.adapter != nil, tunnel.handshake != nil else {
-            var incompleteTunnel = tunnel
-            incompleteTunnel.free()
-            throw makeError("Tunnel was created without valid handles")
-        }
-
-        return tunnel
+        throw lastError ?? makeError("No reachable address was found for \(target.displayName)", code: -18)
     }
 
     func startTunnel() throws {
@@ -238,6 +233,7 @@ final class JITEnableContext {
 
         var newAdapter: OpaquePointer?
         var newHandshake: OpaquePointer?
+        var newTargetID: String?
         var finalError: NSError?
 
         defer {
@@ -250,9 +246,14 @@ final class JITEnableContext {
         }
 
         do {
-            let newTunnel = try createTunnel(hostname: "StikDebug")
+            var newTunnel = try createTunnel(hostname: "StikDebug")
+            if newTunnel.targetID != DeviceConnectionContext.current.id {
+                newTunnel.free()
+                newTunnel = try createTunnel(hostname: "StikDebug")
+            }
             newAdapter = newTunnel.adapter
             newHandshake = newTunnel.handshake
+            newTargetID = newTunnel.targetID
         } catch let tunnelError as NSError {
             finalError = tunnelError
             throw tunnelError
@@ -267,12 +268,30 @@ final class JITEnableContext {
 
         adapter = newAdapter
         handshake = newHandshake
+        connectedTargetID = newTargetID
     }
 
     func ensureTunnel() throws {
-        if adapter == nil || handshake == nil {
+        if adapter == nil || handshake == nil || connectedTargetID != DeviceConnectionContext.current.id {
             try startTunnel()
         }
+    }
+
+    func invalidateTunnel() {
+        stopSyslogRelay()
+        tunnelLock.lock()
+        defer { tunnelLock.unlock() }
+        if let handshake {
+            rsd_handshake_free(handshake)
+            self.handshake = nil
+        }
+        if let adapter {
+            _ = adapter_close(adapter)
+            adapter_free(adapter)
+            self.adapter = nil
+        }
+        connectedTargetID = nil
+        lastTunnelError = nil
     }
 
     private func withFreshDebugTunnel<T>(

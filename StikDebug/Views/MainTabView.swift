@@ -50,6 +50,7 @@ private enum ExternalLocationAction: Identifiable {
 }
 
 struct MainTabView: View {
+    @ObservedObject private var deviceTarget = DeviceTargetManager.shared
     @AppStorage("primaryTabSelection") private var selection: String = AppFeature.home.id
     @State private var detachedFeature: AppFeature?
     @State private var didSetInitialHome = false
@@ -64,6 +65,28 @@ struct MainTabView: View {
                     feature.destination
                         .tabItem { Label(feature.title, systemImage: feature.systemImage) }
                         .tag(feature.id)
+                }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let remoteName = deviceTarget.remoteDeviceName {
+                    HStack(spacing: 10) {
+                        Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Controlling \(remoteName)")
+                                .font(.caption.weight(.semibold))
+                            Text("All device tools target this device")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Use This Device") {
+                            DeviceTargetManager.shared.selectThisDevice()
+                        }
+                        .font(.caption.weight(.semibold))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial)
                 }
             }
             .onAppear {
@@ -203,7 +226,7 @@ struct MainTabView: View {
             return
         }
 
-        let pairingFile = PairingFileStore.prepareURL()
+        let pairingFile = DeviceConnectionContext.current.pairingFileURL
         guard FileManager.default.fileExists(atPath: pairingFile.path) else {
             showAlert(
                 title: "Pairing File Required",
@@ -215,7 +238,7 @@ struct MainTabView: View {
 
         LocationSimulationCommandQueue.shared.async {
             let code = simulate_location(
-                DeviceConnectionContext.targetIPAddress,
+                DeviceConnectionContext.current.displayName,
                 coordinate.latitude,
                 coordinate.longitude,
                 pairingFile.path

@@ -1,0 +1,24 @@
+diff --git a/ffi/Cargo.toml b/ffi/Cargo.toml
+index 77c4f22..a0d5013 100644
+--- a/ffi/Cargo.toml
++++ b/ffi/Cargo.toml
+@@ -33,6 +33,6 @@ afc = ["idevice/afc"]
+ amfi = ["idevice/amfi"]
+ bt_packet_logger = ["idevice/bt_packet_logger"]
+ companion_proxy = ["idevice/companion_proxy"]
+-core_device = ["idevice/core_device", "dep:futures", "dep:uuid", "rsd"]
++core_device = ["idevice/core_device", "idevice/display_stream", "dep:futures", "dep:uuid", "rsd"]
+ core_device_proxy = ["idevice/core_device_proxy", "idevice/tunnel_tcp_stack"]
+ crashreportcopymobile = ["idevice/crashreportcopymobile", "afc"]
+diff --git a/ffi/src/lib.rs b/ffi/src/lib.rs
+index 04d662e..4a1ac95 100644
+--- a/ffi/src/lib.rs
++++ b/ffi/src/lib.rs
+@@ -61,5 +61,7 @@ pub mod provider;
+ #[cfg(feature = "remote_pairing")]
+ pub mod remote_pairing_lockdown;
++#[cfg(feature = "core_device")]
++pub mod remote_control;
+ #[cfg(feature = "restore")]
+ pub mod restore;
+ #[cfg(feature = "restore_service")]

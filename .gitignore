@@ -95,3 +95,6 @@ iOSInjectionProject/
 .DS_Store
 .vscode/settings.json
 .vscode 
+
+# Reconstructed from the tracked idevice archive parts by assemble.sh.
+StikDebug/idevice/libidevice_ffi.a

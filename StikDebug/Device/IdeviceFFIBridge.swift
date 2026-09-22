@@ -9,7 +9,7 @@ import Foundation
 import UIKit
 import idevice
 
-private enum IdeviceBridge {
+enum IdeviceBridge {
     static let processQueue = DispatchQueue(label: "com.stikdebug.processInspector", qos: .userInitiated)
 
     static func makeError(
@@ -725,12 +725,14 @@ private enum LocationSimulationStatus {
 }
 
 private enum LocationSimulationState {
+    static var targetID: String?
     static var adapter: OpaquePointer?
     static var handshake: OpaquePointer?
     static var remoteServer: OpaquePointer?
     static var locationSimulation: OpaquePointer?
 
     static func cleanup() {
+        targetID = nil
         if let locationSimulation {
             location_simulation_free(locationSimulation)
             self.locationSimulation = nil
@@ -755,6 +757,11 @@ enum LocationSimulationCommandQueue {
 }
 
 func simulate_location(_ deviceIP: String, _ latitude: Double, _ longitude: Double, _ pairingFile: String) -> Int32 {
+    let target = DeviceConnectionContext.current
+    if LocationSimulationState.targetID != target.id {
+        LocationSimulationState.cleanup()
+    }
+
     if let locationSimulation = LocationSimulationState.locationSimulation {
         if let ffiError = location_simulation_set(locationSimulation, latitude, longitude) {
             idevice_error_free(ffiError)
@@ -764,17 +771,8 @@ func simulate_location(_ deviceIP: String, _ latitude: Double, _ longitude: Doub
         }
     }
 
-    var address = sockaddr_in()
-    address.sin_family = sa_family_t(AF_INET)
-    address.sin_port = in_port_t(49152).bigEndian
-
-    let inetResult = deviceIP.withCString { inet_pton(AF_INET, $0, &address.sin_addr) }
-    guard inetResult == 1 else {
-        return LocationSimulationStatus.invalidIP
-    }
-
     var pairingHandle: OpaquePointer?
-    let pairingError = pairingFile.withCString { rp_pairing_file_read($0, &pairingHandle) }
+    let pairingError = target.pairingFileURL.path.withCString { rp_pairing_file_read($0, &pairingHandle) }
     if let pairingError {
         idevice_error_free(pairingError)
         return LocationSimulationStatus.pairingRead
@@ -786,11 +784,13 @@ func simulate_location(_ deviceIP: String, _ latitude: Double, _ longitude: Doub
 
     defer { rp_pairing_file_free(pairingHandle) }
 
-    let providerError = withUnsafePointer(to: &address) { pointer in
-        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-            tunnel_create_rppairing(
-                $0,
-                socklen_t(MemoryLayout<sockaddr_in>.stride),
+    var providerFailure: UnsafeMutablePointer<IdeviceFfiError>?
+    for address in target.addresses {
+        let error = address.withUnsafeBytes { buffer -> UnsafeMutablePointer<IdeviceFfiError>? in
+            guard let baseAddress = buffer.baseAddress else { return nil }
+            return tunnel_create_rppairing(
+                baseAddress.assumingMemoryBound(to: sockaddr.self),
+                socklen_t(buffer.count),
                 "StikDebugLocation",
                 pairingHandle,
                 nil,
@@ -799,13 +799,25 @@ func simulate_location(_ deviceIP: String, _ latitude: Double, _ longitude: Doub
                 &LocationSimulationState.handshake
             )
         }
+        if error == nil, LocationSimulationState.adapter != nil, LocationSimulationState.handshake != nil {
+            if let providerFailure { idevice_error_free(providerFailure) }
+            providerFailure = nil
+            break
+        }
+        if let providerFailure { idevice_error_free(providerFailure) }
+        providerFailure = error
     }
 
-    if let providerError {
-        idevice_error_free(providerError)
+    if let providerFailure {
+        idevice_error_free(providerFailure)
         LocationSimulationState.cleanup()
         return LocationSimulationStatus.providerCreate
     }
+    guard LocationSimulationState.adapter != nil, LocationSimulationState.handshake != nil else {
+        LocationSimulationState.cleanup()
+        return LocationSimulationStatus.invalidIP
+    }
+    LocationSimulationState.targetID = target.id
 
     let remoteServerError = remote_server_connect_rsd(
         LocationSimulationState.adapter,

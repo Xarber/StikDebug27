@@ -768,7 +768,7 @@ struct LocationSimulationView: View {
     @State private var newBookmarkName = ""
 
     private var pairingFilePath: String {
-        PairingFileStore.prepareURL().path
+        DeviceConnectionContext.current.pairingFileURL.path
     }
 
     private var pairingExists: Bool {
@@ -776,7 +776,7 @@ struct LocationSimulationView: View {
     }
 
     private var deviceIP: String {
-        DeviceConnectionContext.targetIPAddress
+        DeviceConnectionContext.current.displayName
     }
 
     private var routeStartCoordinate: CLLocationCoordinate2D? {
