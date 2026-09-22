@@ -5,9 +5,9 @@ use idevice::{
     core_device::{
         ButtonState, CallInfoBlob, DisplayServiceClient, HevcDepacketizer, ImageFormat,
         IndigoHidClient, KeyboardUsage, MainKeyboardService, OrientationServiceClient,
-        RotationDirection, RtpPacket, ScreenCaptureServiceClient, UniversalHidServiceClient,
-        build_screen_audio_offer, build_screen_video_offer, build_start_audio_parameters,
-        build_start_video_parameters,
+        RotationDirection, RtpPacket, ScreenCaptureServiceClient, TOUCHSCREEN_STATE_CONTACT,
+        TOUCHSCREEN_STATE_RELEASE, UniversalHidServiceClient, build_screen_audio_offer,
+        build_screen_video_offer, build_start_audio_parameters, build_start_video_parameters,
     },
     tcp::handle::UdpSocketHandle,
 };
@@ -309,6 +309,37 @@ pub unsafe extern "C" fn remote_control_client_drag(
             .client
             .drag(start_x, start_y, end_x, end_y, steps, delay_ms),
     ) {
+        Ok(()) => null_mut(),
+        Err(error) => ffi_err!(error),
+    }
+}
+
+/// Sends one live touchscreen transition: 0=down, 1=move, 2=up.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remote_control_client_touch(
+    handle: *mut RemoteControlClientHandle,
+    phase: u8,
+    x: u16,
+    y: u16,
+) -> *mut IdeviceFfiError {
+    if handle.is_null() {
+        return ffi_err!(IdeviceError::FfiInvalidArg);
+    }
+    let state = match phase {
+        0 | 1 => TOUCHSCREEN_STATE_CONTACT,
+        2 => TOUCHSCREEN_STATE_RELEASE,
+        _ => return ffi_err!(IdeviceError::FfiInvalidArg),
+    };
+    let handle = unsafe { &*handle };
+    let mut hid = match handle.universal_hid.lock() {
+        Ok(hid) => hid,
+        Err(_) => {
+            return ffi_err!(IdeviceError::InternalError(
+                "touch client lock poisoned".into()
+            ));
+        }
+    };
+    match run_sync_local(hid.client.send_touchscreen(state, x, y, None)) {
         Ok(()) => null_mut(),
         Err(error) => ffi_err!(error),
     }

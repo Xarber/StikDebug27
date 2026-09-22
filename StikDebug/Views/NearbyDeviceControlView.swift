@@ -190,10 +190,8 @@ struct NearbyDeviceControlView: View {
 
     private func send(_ gesture: RemoteScreenGesture) {
         switch gesture {
-        case .tap(let point):
-            controller.tap(x: point.x, y: point.y)
-        case .drag(let start, let end):
-            controller.drag(from: (start.x, start.y), to: (end.x, end.y))
+        case .touch(let phase, let point):
+            controller.touch(phase, x: point.x, y: point.y)
         }
     }
 
@@ -382,10 +380,8 @@ private struct RemoteFullscreenView: View {
             Color.black.ignoresSafeArea()
             RemoteScreenSurface(image: controller.frame) { gesture in
                 switch gesture {
-                case .tap(let point):
-                    controller.tap(x: point.x, y: point.y)
-                case .drag(let start, let end):
-                    controller.drag(from: (start.x, start.y), to: (end.x, end.y))
+                case .touch(let phase, let point):
+                    controller.touch(phase, x: point.x, y: point.y)
                 }
             }
             .ignoresSafeArea()
@@ -408,8 +404,7 @@ private struct RemoteFullscreenView: View {
 }
 
 private enum RemoteScreenGesture {
-    case tap(RemoteNormalizedPoint)
-    case drag(RemoteNormalizedPoint, RemoteNormalizedPoint)
+    case touch(RemoteTouchPhase, RemoteNormalizedPoint)
 }
 
 private struct RemoteNormalizedPoint {
@@ -420,6 +415,7 @@ private struct RemoteNormalizedPoint {
 private struct RemoteScreenSurface: View {
     let image: UIImage?
     let action: (RemoteScreenGesture) -> Void
+    @State private var isTouchActive = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -434,18 +430,19 @@ private struct RemoteScreenSurface: View {
                         .contentShape(Rectangle())
                         .gesture(
                             DragGesture(minimumDistance: 0)
-                                .onEnded { value in
-                                    let start = normalized(value.startLocation, in: fittedSize)
-                                    let end = normalized(value.location, in: fittedSize)
-                                    let distance = hypot(
-                                        value.location.x - value.startLocation.x,
-                                        value.location.y - value.startLocation.y
-                                    )
-                                    if distance < 8 {
-                                        action(.tap(end))
+                                .onChanged { value in
+                                    let point = normalized(value.location, in: fittedSize)
+                                    if isTouchActive {
+                                        action(.touch(.move, point))
                                     } else {
-                                        action(.drag(start, end))
+                                        isTouchActive = true
+                                        action(.touch(.down, point))
                                     }
+                                }
+                                .onEnded { value in
+                                    let end = normalized(value.location, in: fittedSize)
+                                    action(.touch(.up, end))
+                                    isTouchActive = false
                                 }
                         )
                 } else {

@@ -7528,6 +7528,14 @@ struct IdeviceFfiError *remote_control_client_drag(struct RemoteControlClientHan
                                                    uint64_t duration_ms);
 
 /**
+ * Sends one live touchscreen transition: 0=down, 1=move, 2=up.
+ */
+struct IdeviceFfiError *remote_control_client_touch(struct RemoteControlClientHandle *handle,
+                                                    uint8_t phase,
+                                                    uint16_t x,
+                                                    uint16_t y);
+
+/**
  * Taps one HID Keyboard/Keypad usage with an optional USB HID modifier bitmap.
  */
 struct IdeviceFfiError *remote_control_client_keyboard_tap(struct RemoteControlClientHandle *handle,

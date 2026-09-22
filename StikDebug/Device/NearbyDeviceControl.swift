@@ -137,6 +137,12 @@ enum RemoteRotationDirection: UInt8 {
     case right
 }
 
+enum RemoteTouchPhase: UInt8 {
+    case down
+    case move
+    case up
+}
+
 final class RemoteDeviceSession: @unchecked Sendable {
     struct VideoAccessUnit: Sendable {
         let data: Data
@@ -296,6 +302,14 @@ final class RemoteDeviceSession: @unchecked Sendable {
         }
     }
 
+    func touch(_ phase: RemoteTouchPhase, x: UInt16, y: UInt16) throws {
+        try withController { controller in
+            if let error = remote_control_client_touch(controller, phase.rawValue, x, y) {
+                throw IdeviceBridge.consumeFFIError(error, fallback: "Remote touch input failed")
+            }
+        }
+    }
+
     func drag(from start: (UInt16, UInt16), to end: (UInt16, UInt16), duration: UInt64) throws {
         try withController { controller in
             if let error = remote_control_client_drag(
@@ -441,6 +455,7 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
     @Published var errorMessage: String?
 
     private let commandQueue = DispatchQueue(label: "com.stikdebug.nearby-remote-control.commands", qos: .userInteractive)
+    private let touchQueue = DispatchQueue(label: "com.stikdebug.nearby-remote-control.touch", qos: .userInteractive)
     private let videoQueue = DispatchQueue(label: "com.stikdebug.nearby-remote-control.video", qos: .userInteractive)
     private let sessionLock = NSLock()
     private var session: RemoteDeviceSession?
@@ -492,6 +507,17 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
 
     func press(_ button: RemoteHardwareButton) {
         perform { try $0.press(button) }
+    }
+
+    func touch(_ phase: RemoteTouchPhase, x: UInt16, y: UInt16) {
+        touchQueue.async { [weak self] in
+            guard let self, let session = self.currentSession() else { return }
+            do {
+                try session.touch(phase, x: x, y: y)
+            } catch {
+                DispatchQueue.main.async { self.errorMessage = error.localizedDescription }
+            }
+        }
     }
 
     func type(_ text: String) {
