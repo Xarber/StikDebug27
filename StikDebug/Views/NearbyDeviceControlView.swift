@@ -15,6 +15,8 @@ struct NearbyDeviceControlView: View {
     @State private var isShowingPairing = false
     @State private var isImportingPairingFile = false
     @State private var importMessage: String?
+    @AppStorage("stikServerAddress") private var serverAddress = ""
+    @AppStorage("stikServerToken") private var serverToken = ""
 
     var body: some View {
         deviceList
@@ -97,6 +99,38 @@ struct NearbyDeviceControlView: View {
                         Image(systemName: "doc.badge.plus")
                     }
                 }
+            }
+
+            Section("StikServer") {
+                TextField("Server address or copied access link", text: $serverAddress)
+                    .textContentType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                SecureField("Private token, if not included in the link", text: $serverToken)
+                    .textContentType(.password)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                NavigationLink {
+                    StikServerClientView(serverAddress: serverAddress, token: serverToken)
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Open StikServer Devices")
+                            Text("View and control devices connected to your desktop server")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "desktopcomputer.and.macbook")
+                    }
+                }
+                .disabled(serverAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Text("In the StikServer desktop app, use Copy Remote Access Link and paste it above. StikDebug connects as a viewer; it does not relay this device to the server.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Nearby Devices") {
