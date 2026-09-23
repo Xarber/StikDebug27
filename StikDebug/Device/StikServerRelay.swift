@@ -156,6 +156,12 @@ final class StikServerRelay: NSObject, ObservableObject {
         case "mute": controller.press(.mute)
         case "siri": controller.press(.siri)
         case "softwareKeyboard": controller.toggleSoftwareKeyboard()
+        case "rotateLeft": controller.rotate(.left)
+        case "rotateRight": controller.rotate(.right)
+        case "backspace": controller.backspace()
+        case "text":
+            guard let text = object["text"] as? String, !text.isEmpty else { return }
+            controller.type(String(text.prefix(2_000)))
         case "touch":
             guard let x = object["x"] as? Double,
                   let y = object["y"] as? Double,

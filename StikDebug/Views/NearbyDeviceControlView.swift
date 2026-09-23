@@ -162,6 +162,10 @@ struct NearbyDeviceControlView: View {
 }
 
 private struct RemoteDeviceDetailView: View {
+    // Keep the StikDebug-as-relay implementation available as a dormant fallback.
+    // StikServer normally discovers and controls devices directly on its own network.
+    private static let showsStikServerRelay = false
+
     let device: NearbyDevelopmentDevice
     @StateObject private var controller = NearbyRemoteControlModel()
     @StateObject private var relay = StikServerRelay()
@@ -189,7 +193,9 @@ private struct RemoteDeviceDetailView: View {
                 if controller.isMirroring {
                     RemoteHardwareControls(controller: controller)
                     viewerActions
-                    stikServerControls
+                    if Self.showsStikServerRelay {
+                        stikServerControls
+                    }
                     RemoteKeyboardCapture(isActive: $keyboardActive, controller: controller)
                         .frame(width: 1, height: 1)
                         .opacity(0.01)
@@ -306,18 +312,23 @@ private struct RemoteDeviceDetailView: View {
 
     private var stikServerControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("StikServer", systemImage: "network")
+            Label("Share This Screen with StikServer", systemImage: "network")
                 .font(.headline)
-            TextField("Server address, for example 100.64.0.10:8765", text: $serverAddress)
-                .textContentType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .textFieldStyle(.roundedBorder)
-            SecureField("Private token (optional)", text: $serverToken)
-                .textContentType(.password)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .textFieldStyle(.roundedBorder)
+            Text("Optional. This sends the active screen and controls to your private StikServer so another browser or Android device can control it. It does not change the selected StikDebug command target.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if relay.state != .connected {
+                TextField("Server address, for example 100.64.0.10:8765", text: $serverAddress)
+                    .textContentType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+                SecureField("Private token (optional)", text: $serverToken)
+                    .textContentType(.password)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+            }
             HStack {
                 if relay.state == .connected {
                     Button("Disconnect", role: .destructive) { relay.disconnect() }
@@ -331,7 +342,7 @@ private struct RemoteDeviceDetailView: View {
                             controller: controller
                         )
                     } label: {
-                        Label("Share with StikServer", systemImage: "antenna.radiowaves.left.and.right")
+                        Label("Start Web Sharing", systemImage: "antenna.radiowaves.left.and.right")
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(serverAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -342,7 +353,7 @@ private struct RemoteDeviceDetailView: View {
                     .foregroundStyle(relay.state == .connected ? .green : .secondary)
                     .lineLimit(1)
             }
-            Text("The relay remains active only while this device page and its screen stream are open.")
+            Text("Sharing automatically stops when this device page or its screen stream closes.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -617,17 +628,15 @@ private struct RemoteFullscreenView: View {
                 }
                 .accessibilityLabel(controlsExpanded ? "Collapse Controls" : "Expand Controls")
 
-                Button { isPresented = false } label: {
-                    Image(systemName: "arrow.down.right.and.arrow.up.left")
-                        .frame(width: 36, height: 24)
-                }
-                .accessibilityLabel("Exit Fullscreen")
             }
             .buttonStyle(.bordered)
 
             if controlsExpanded {
                 RemoteHardwareControls(controller: controller)
                 HStack {
+                    Button { isPresented = false } label: {
+                        Label("Exit Fullscreen", systemImage: "arrow.down.right.and.arrow.up.left")
+                    }
                     Button(action: saveScreenshot) { Label("Screenshot", systemImage: "camera") }
                     Button { keyboardActive.toggle() } label: {
                         Label(keyboardActive ? "Hide Input Keyboard" : "Input Keyboard", systemImage: "keyboard.badge.ellipsis")
