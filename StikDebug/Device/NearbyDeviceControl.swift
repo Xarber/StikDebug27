@@ -96,7 +96,6 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
         let serviceIdentifier = txt.identifier ?? sender.name
         let pairingMatch = try? RemotePairingStore.matchingRecord(
             serviceIdentifier: serviceIdentifier,
-            deviceIdentifier: pairingMatch?.record.deviceIdentifier,
             authenticationTags: txt.authenticationTags
         )
         let device = NearbyDevelopmentDevice(
@@ -105,6 +104,7 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
             type: sender.type,
             domain: sender.domain,
             serviceIdentifier: serviceIdentifier,
+            deviceIdentifier: pairingMatch?.record.deviceIdentifier,
             addresses: addresses,
             pairingRecordID: pairingMatch?.record.id,
             pairingFileURL: pairingMatch?.pairingFileURL
