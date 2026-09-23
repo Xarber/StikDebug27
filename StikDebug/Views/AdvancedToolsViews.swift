@@ -59,6 +59,9 @@ struct AdvancedToolsView: View {
                     NavigationLink { DeviceControlsView() } label: {
                         Label("Device Controls", systemImage: "power")
                     }
+                    NavigationLink { DeviceEnvironmentView() } label: {
+                        Label("Device Environment", systemImage: "gauge.with.dots.needle.33percent")
+                    }
                     NavigationLink { NotificationToolsView() } label: {
                         Label("System Notifications", systemImage: "bell")
                     }
