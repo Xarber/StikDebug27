@@ -51,7 +51,7 @@ struct AdvancedToolsView: View {
                 }
                 Section("Device") {
                     NavigationLink { NearbyDeviceControlView() } label: {
-                        Label("Nearby Device Control", systemImage: "iphone.gen3.radiowaves.left.and.right")
+                        Label("Nearby Device Control", systemImage: "ipad.and.iphone")
                     }
                     NavigationLink { SideloadedAppsManagerView() } label: {
                         Label("Sideloaded Apps", systemImage: "app.badge")

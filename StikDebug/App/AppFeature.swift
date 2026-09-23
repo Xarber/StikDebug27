@@ -103,11 +103,11 @@ enum AppFeature: String, CaseIterable, Identifiable {
         case .tools:
             return "wrench.and.screwdriver"
         case .devices:
-            return "iphone.gen3.radiowaves.left.and.right"
+            return "ipad.and.iphone"
         case .console:
             return "terminal"
         case .deviceInfo:
-            return "iphone.and.arrow.forward"
+            return DevicePresentation.localSystemImage
         case .profiles:
             return "calendar.badge.clock"
         case .processes:

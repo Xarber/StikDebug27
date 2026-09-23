@@ -123,9 +123,9 @@ struct MainTabView: View {
 
     private var deviceTargetBar: some View {
         HStack(spacing: 10) {
-            Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+            Image(systemName: deviceTarget.remoteDeviceSystemImage ?? "ipad.and.iphone")
             VStack(alignment: .leading, spacing: 1) {
-                Text("Controlling \(deviceTarget.remoteDeviceName ?? "This Device")")
+                Text("Controlling \(deviceTarget.remoteDeviceName ?? "This \(DevicePresentation.localKind)")")
                     .font(.caption.weight(.semibold))
                 Text("All device tools target this device")
                     .font(.caption2)
@@ -137,14 +137,14 @@ struct MainTabView: View {
                     NotificationCenter.default.post(name: .stopRemoteMirroring, object: nil)
                     deviceTarget.selectThisDevice()
                 } label: {
-                    targetLabel("This Device", id: "local", icon: "iphone")
+                    targetLabel("This \(DevicePresentation.localKind)", id: "local", icon: DevicePresentation.localSystemImage)
                 }
                 ForEach(nearbyDevices.devices.filter(\.isPaired)) { device in
                     Button {
                         guard let pairingFileURL = device.pairingFileURL else { return }
                         deviceTarget.selectRemoteDevice(device, pairingFileURL: pairingFileURL)
                     } label: {
-                        targetLabel(device.name, id: device.id, icon: "iphone.gen3.radiowaves.left.and.right")
+                        targetLabel(device.name, id: device.id, icon: device.systemImage)
                     }
                 }
             } label: {

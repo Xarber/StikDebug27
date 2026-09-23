@@ -20,6 +20,7 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
     static let shared = DeviceTargetManager()
 
     @Published private(set) var remoteDeviceName: String?
+    @Published private(set) var remoteDeviceSystemImage: String?
     @Published private(set) var selectedTargetID = "local"
 
     private let lock = NSLock()
@@ -47,7 +48,7 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
         let data = withUnsafeBytes(of: address) { Data($0) }
         return DeviceConnectionSnapshot(
             id: "local|\(ip)",
-            displayName: "This Device",
+            displayName: "This \(DevicePresentation.localKind)",
             addresses: [data],
             pairingFileURL: PairingFileStore.prepareURL(),
             isRemote: false
@@ -66,7 +67,7 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
         lock.lock()
         remoteSnapshot = snapshot
         lock.unlock()
-        publishTargetChange(id: device.id, name: device.name)
+        publishTargetChange(id: device.id, name: device.name, systemImage: device.systemImage)
     }
 
     func selectThisDevice() {
@@ -76,13 +77,14 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
         remoteSnapshot = nil
         lock.unlock()
         guard changed else { return }
-        publishTargetChange(id: "local", name: nil)
+        publishTargetChange(id: "local", name: nil, systemImage: nil)
     }
 
-    private func publishTargetChange(id: String, name: String?) {
+    private func publishTargetChange(id: String, name: String?, systemImage: String?) {
         let update = {
             self.selectedTargetID = id
             self.remoteDeviceName = name
+            self.remoteDeviceSystemImage = systemImage
             JITEnableContext.shared.invalidateTunnel()
             markTunnelDisconnected()
             MountingProgress.shared.resetForTargetChange()

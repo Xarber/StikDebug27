@@ -15,6 +15,7 @@ struct NearbyDevelopmentDevice: Identifiable, Equatable {
     let domain: String
     let serviceIdentifier: String
     let deviceIdentifier: String?
+    let modelIdentifier: String?
     let addresses: [Data]
     let pairingRecordID: UUID?
     let pairingFileURL: URL?
@@ -22,6 +23,8 @@ struct NearbyDevelopmentDevice: Identifiable, Equatable {
     var id: String { pairingRecordID?.uuidString ?? discoveryID }
     var isPaired: Bool { pairingFileURL != nil }
     var displayedIdentifier: String { deviceIdentifier ?? serviceIdentifier }
+    var kind: String { DevicePresentation.kind(forModelIdentifier: modelIdentifier) }
+    var systemImage: String { DevicePresentation.systemImage(forModelIdentifier: modelIdentifier, connected: true) }
 }
 
 final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDelegate, NetServiceDelegate {
@@ -105,6 +108,7 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
             domain: sender.domain,
             serviceIdentifier: serviceIdentifier,
             deviceIdentifier: pairingMatch?.record.deviceIdentifier,
+            modelIdentifier: pairingMatch?.record.modelIdentifier,
             addresses: addresses,
             pairingRecordID: pairingMatch?.record.id,
             pairingFileURL: pairingMatch?.pairingFileURL
@@ -133,6 +137,7 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
                 domain: first.domain,
                 serviceIdentifier: first.serviceIdentifier,
                 deviceIdentifier: first.deviceIdentifier,
+                modelIdentifier: first.modelIdentifier,
                 addresses: addresses,
                 pairingRecordID: first.pairingRecordID,
                 pairingFileURL: first.pairingFileURL
@@ -244,7 +249,7 @@ final class RemoteDeviceSession: @unchecked Sendable {
     }
 
     static func connect(to device: NearbyDevelopmentDevice) throws -> RemoteDeviceSession {
-        let hostName = "StikDebug-\(UIDevice.current.name)"
+        let hostName = DevicePresentation.localControllerName
         guard device.isPaired else {
             throw IdeviceBridge.makeError(message: "This nearby device is not paired with StikDebug")
         }

@@ -48,8 +48,8 @@ struct NearbyDeviceControlView: View {
                 } label: {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Pair New iPhone or iPad")
-                            Text("Make StikDebug appear as a Mac in Developer Mode")
+                            Text("Pair New Device")
+                            Text("Make \(DevicePresentation.localControllerName) appear as a Mac in Developer Mode")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -75,7 +75,7 @@ struct NearbyDeviceControlView: View {
                                 Label {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(device.name).foregroundStyle(.primary)
-                                        Text(device.isPaired ? "Paired" : "Not paired with StikDebug")
+                                        Text(device.isPaired ? "Paired \(device.kind)" : "Unpaired \(device.kind)")
                                             .font(.caption)
                                             .foregroundStyle(device.isPaired ? .green : .secondary)
                                         Text("UUID: \(device.displayedIdentifier)")
@@ -85,7 +85,7 @@ struct NearbyDeviceControlView: View {
                                             .truncationMode(.middle)
                                     }
                                 } icon: {
-                                    Image(systemName: device.isPaired ? "checkmark.circle.fill" : "iphone.gen3.radiowaves.left.and.right")
+                                    Image(systemName: device.isPaired ? "checkmark.circle.fill" : device.systemImage)
                                         .foregroundStyle(device.isPaired ? .green : .secondary)
                                 }
                             }
@@ -103,19 +103,19 @@ struct NearbyDeviceControlView: View {
                 NotificationCenter.default.post(name: .stopRemoteMirroring, object: nil)
                 deviceTarget.selectThisDevice()
             } label: {
-                Label("This Device", systemImage: deviceTarget.selectedTargetID == "local" ? "checkmark" : "iphone")
+                Label("This \(DevicePresentation.localKind)", systemImage: deviceTarget.selectedTargetID == "local" ? "checkmark" : DevicePresentation.localSystemImage)
             }
             ForEach(browser.devices.filter(\.isPaired)) { device in
                 Button {
                     guard let pairingFileURL = device.pairingFileURL else { return }
                     deviceTarget.selectRemoteDevice(device, pairingFileURL: pairingFileURL)
                 } label: {
-                    Label(device.name, systemImage: deviceTarget.selectedTargetID == device.id ? "checkmark" : "iphone.gen3.radiowaves.left.and.right")
+                    Label(device.name, systemImage: deviceTarget.selectedTargetID == device.id ? "checkmark" : device.systemImage)
                 }
             }
         } label: {
             LabeledContent("Selected Device") {
-                Text(deviceTarget.remoteDeviceName ?? "This Device")
+                Text(deviceTarget.remoteDeviceName ?? "This \(DevicePresentation.localKind)")
             }
         }
     }
@@ -134,6 +134,7 @@ private struct RemoteDeviceDetailView: View {
             VStack(spacing: 16) {
                 VStack(spacing: 3) {
                     Text(device.name).font(.headline)
+                    Text(device.kind).font(.subheadline).foregroundStyle(.secondary)
                     Text("UUID: \(device.displayedIdentifier)")
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
@@ -326,7 +327,7 @@ private struct RemotePairingView: View {
                     .font(.headline)
                 pairingStep(1, "Open Settings.")
                 pairingStep(2, "Choose Privacy & Security, then Developer Mode.")
-                pairingStep(3, "Under Other Devices, choose Pair with StikDebug.")
+                pairingStep(3, "Under Other Devices, choose \(DevicePresentation.localControllerName).")
                 HStack(spacing: 10) {
                     ProgressView()
                     Text("Waiting for the other device…")
@@ -374,7 +375,7 @@ private struct RemotePairingView: View {
     private var title: String {
         switch pairing.phase {
         case .idle, .preparing: return "Preparing Pairing"
-        case .advertising: return "Ready on This Device"
+        case .advertising: return "Ready on This \(DevicePresentation.localKind)"
         case .waitingForCode: return "Confirm Pairing"
         case .saving: return "Finishing Pairing"
         case .completed: return "Device Paired"
@@ -387,7 +388,7 @@ private struct RemotePairingView: View {
         case .completed: return "checkmark.circle.fill"
         case .failed: return "exclamationmark.triangle.fill"
         case .waitingForCode: return "number.circle.fill"
-        default: return "iphone.gen3.radiowaves.left.and.right"
+        default: return "ipad.and.iphone"
         }
     }
 
