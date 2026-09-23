@@ -208,10 +208,14 @@ enum RemoteScreenOrientation: UInt8 {
     case unknown = 0
     case portrait = 1
     case portraitUpsideDown = 2
-    case landscapeRight = 3
-    case landscapeLeft = 4
+    case landscapeLeft = 3
+    case landscapeRight = 4
 
     var isLandscape: Bool { self == .landscapeLeft || self == .landscapeRight }
+}
+
+final class RemoteVideoFrameStore: ObservableObject {
+    @Published fileprivate(set) var image: UIImage?
 }
 
 enum RemoteTouchPhase: UInt8 {
@@ -545,7 +549,7 @@ final class RemoteDeviceSession: @unchecked Sendable {
 }
 
 final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
-    @Published private(set) var frame: UIImage?
+    let video = RemoteVideoFrameStore()
     @Published private(set) var connectedDeviceName: String?
     @Published private(set) var orientation: RemoteScreenOrientation = .portrait
     @Published private(set) var isConnecting = false
@@ -597,7 +601,7 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
         let oldSession = replaceSession(with: nil)
         videoQueue.async { oldSession?.close() }
         DispatchQueue.main.async { [weak self] in
-            self?.frame = nil
+            self?.video.image = nil
             self?.connectedDeviceName = nil
             self?.isConnecting = false
             self?.orientation = .portrait
@@ -609,7 +613,7 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
         cancelRequest(keepDevice: true)
         let oldSession = replaceSession(with: nil)
         videoQueue.async { oldSession?.close() }
-        frame = nil
+        video.image = nil
         connectedDeviceName = nil
         isConnecting = false
         errorMessage = nil
@@ -693,7 +697,7 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
                         DispatchQueue.main.async {
                             switch result {
                             case .success(let image):
-                                self.frame = image
+                                self.video.image = image
                             case .failure(let error):
                                 if self.errorMessage == nil {
                                     self.errorMessage = error.localizedDescription

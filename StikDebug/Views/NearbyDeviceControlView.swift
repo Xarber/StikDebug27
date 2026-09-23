@@ -201,7 +201,7 @@ private struct RemoteDeviceDetailView: View {
     @ViewBuilder
     private var mirrorPanel: some View {
         if controller.isMirroring {
-            RemoteScreenSurface(image: controller.frame, orientation: controller.orientation, action: send)
+            RemoteScreenSurface(video: controller.video, orientation: controller.orientation, action: send)
                 .frame(maxWidth: .infinity, minHeight: 280, maxHeight: 560)
                 .background(Color.black)
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -261,7 +261,7 @@ private struct RemoteDeviceDetailView: View {
     }
 
     private func saveScreenshot() {
-        guard let image = controller.frame else {
+        guard let image = controller.video.image else {
             resultMessage = "No remote frame is available yet."
             return
         }
@@ -456,7 +456,7 @@ private struct RemoteFullscreenView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            RemoteScreenSurface(image: controller.frame, orientation: controller.orientation) { gesture in
+            RemoteScreenSurface(video: controller.video, orientation: controller.orientation) { gesture in
                 switch gesture {
                 case .touch(let phase, let point):
                     controller.touch(phase, x: point.x, y: point.y)
@@ -526,10 +526,12 @@ private struct RemoteNormalizedPoint {
 }
 
 private struct RemoteScreenSurface: View {
-    let image: UIImage?
+    @ObservedObject var video: RemoteVideoFrameStore
     let orientation: RemoteScreenOrientation
     let action: (RemoteScreenGesture) -> Void
     @State private var isTouchActive = false
+
+    private var image: UIImage? { video.image }
 
     var body: some View {
         GeometryReader { geometry in
