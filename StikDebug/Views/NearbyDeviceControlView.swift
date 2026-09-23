@@ -5,61 +5,41 @@
 
 import SwiftUI
 import UIKit
+import Photos
 
 struct NearbyDeviceControlView: View {
-    @StateObject private var browser = NearbyDeviceBrowser()
-    @StateObject private var controller = NearbyRemoteControlModel()
+    @ObservedObject private var browser = NearbyDeviceBrowser.shared
+    @ObservedObject private var deviceTarget = DeviceTargetManager.shared
     @StateObject private var pairing = RemotePairingCoordinator()
-    @State private var isFullscreen = false
     @State private var isShowingPairing = false
-    @State private var remoteKeyboardText = ""
 
     var body: some View {
-        Group {
-            if controller.connectedDeviceName != nil {
-                connectedView
-            } else {
-                discoveryView
-            }
-        }
+        deviceList
         .navigationTitle("Nearby Control")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if controller.connectedDeviceName == nil {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { browser.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                        .disabled(controller.isConnecting)
-                }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { browser.refresh() } label: { Image(systemName: "arrow.clockwise") }
             }
         }
         .onAppear { browser.start() }
-        .onDisappear {
-            if controller.connectedDeviceName == nil { browser.stop() }
-        }
-        .fullScreenCover(isPresented: $isFullscreen) {
-            RemoteFullscreenView(controller: controller, isPresented: $isFullscreen)
-        }
         .sheet(isPresented: $isShowingPairing, onDismiss: {
             pairing.cancel()
             browser.refresh()
         }) {
             RemotePairingView(pairing: pairing, isPresented: $isShowingPairing)
         }
-        .alert(
-            "Nearby Control",
-            isPresented: Binding(
-                get: { controller.errorMessage != nil },
-                set: { if !$0 { controller.errorMessage = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) { controller.errorMessage = nil }
-        } message: {
-            Text(controller.errorMessage ?? "")
-        }
     }
 
-    private var discoveryView: some View {
+    private var deviceList: some View {
         List {
+            Section("Command Target") {
+                targetPicker
+                Text("Every StikDebug tool uses this device. Screen mirroring is controlled separately from each device's page.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Pair a Device") {
                 Button {
                     browser.stop()
@@ -88,108 +68,189 @@ struct NearbyDeviceControlView: View {
                     }
                 } else {
                     ForEach(browser.devices) { device in
-                        Button {
-                            browser.stop()
-                            controller.connect(to: device)
+                        NavigationLink {
+                            RemoteDeviceDetailView(device: device)
                         } label: {
                             HStack {
                                 Label {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(device.name).foregroundStyle(.primary)
-                                        Text(device.isPaired ? "Paired • Screen and all StikDebug tools" : "Not paired with StikDebug")
+                                        Text(device.isPaired ? "Paired" : "Not paired with StikDebug")
                                             .font(.caption)
                                             .foregroundStyle(device.isPaired ? .green : .secondary)
+                                        Text("UUID: \(device.displayedIdentifier)")
+                                            .font(.caption2.monospaced())
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
                                     }
                                 } icon: {
                                     Image(systemName: device.isPaired ? "checkmark.circle.fill" : "iphone.gen3.radiowaves.left.and.right")
                                         .foregroundStyle(device.isPaired ? .green : .secondary)
                                 }
-                                Spacer()
-                                if controller.isConnecting {
-                                    ProgressView()
-                                } else {
-                                    Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                                }
                             }
                         }
-                        .disabled(controller.isConnecting || !device.isPaired)
+                        .disabled(!device.isPaired)
                     }
                 }
             }
         }
-        .overlay {
-            if controller.isConnecting {
-                VStack(spacing: 12) {
-                    ProgressView()
-                    Text("Connecting to the remote device…")
-                    Text("Enabling every StikDebug tool and starting screen mirroring. Keep the other device awake and unlocked.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+    }
+
+    private var targetPicker: some View {
+        Menu {
+            Button {
+                NotificationCenter.default.post(name: .stopRemoteMirroring, object: nil)
+                deviceTarget.selectThisDevice()
+            } label: {
+                Label("This Device", systemImage: deviceTarget.selectedTargetID == "local" ? "checkmark" : "iphone")
+            }
+            ForEach(browser.devices.filter(\.isPaired)) { device in
+                Button {
+                    guard let pairingFileURL = device.pairingFileURL else { return }
+                    deviceTarget.selectRemoteDevice(device, pairingFileURL: pairingFileURL)
+                } label: {
+                    Label(device.name, systemImage: deviceTarget.selectedTargetID == device.id ? "checkmark" : "iphone.gen3.radiowaves.left.and.right")
                 }
-                .padding(24)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+            }
+        } label: {
+            LabeledContent("Selected Device") {
+                Text(deviceTarget.remoteDeviceName ?? "This Device")
             }
         }
     }
+}
 
-    private var connectedView: some View {
-        VStack(spacing: 12) {
-            RemoteScreenSurface(image: controller.frame) { gesture in
-                send(gesture)
-            }
-            .background(Color.black)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(.secondary.opacity(0.35), lineWidth: 1)
-            }
+private struct RemoteDeviceDetailView: View {
+    let device: NearbyDevelopmentDevice
+    @StateObject private var controller = NearbyRemoteControlModel()
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var isFullscreen = false
+    @State private var keyboardActive = false
+    @State private var resultMessage: String?
 
-            HStack {
-                Text(controller.connectedDeviceName ?? "Nearby Device")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                VStack(spacing: 3) {
+                    Text(device.name).font(.headline)
+                    Text("UUID: \(device.displayedIdentifier)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+
+                mirrorPanel
+
+                if controller.isMirroring {
+                    RemoteHardwareControls(controller: controller)
+                    viewerActions
+                    RemoteKeyboardCapture(isActive: $keyboardActive, controller: controller)
+                        .frame(width: 1, height: 1)
+                        .opacity(0.01)
+                }
+
                 Button {
-                    isFullscreen = true
+                    guard let url = device.pairingFileURL else { return }
+                    DeviceTargetManager.shared.selectRemoteDevice(device, pairingFileURL: url)
                 } label: {
-                    Label("Fullscreen", systemImage: "arrow.up.left.and.arrow.down.right")
-                }
-                .buttonStyle(.borderedProminent)
-            }
-
-            Label("Remote target active: every StikDebug tool now uses this device", systemImage: "checkmark.circle.fill")
-                .font(.footnote)
-                .foregroundStyle(.green)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            RemoteHardwareControls(controller: controller)
-
-            HStack(spacing: 8) {
-                TextField("Type on remote device", text: $remoteKeyboardText)
-                    .textFieldStyle(.roundedBorder)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .submitLabel(.send)
-                    .onSubmit(sendKeyboardText)
-                Button(action: sendKeyboardText) {
-                    Image(systemName: "paperplane.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(remoteKeyboardText.isEmpty)
-                Button { controller.backspace() } label: {
-                    Image(systemName: "delete.left")
+                    Label("Use for All StikDebug Tools", systemImage: "scope")
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
-                .accessibilityLabel("Remote Backspace")
             }
+            .padding()
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
+        }
+        .navigationTitle(device.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .onDisappear {
+            if !isFullscreen { controller.stopMirroring() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background, .inactive: controller.suspendMirroring()
+            case .active: controller.resumeMirroring()
+            @unknown default: break
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .stopRemoteMirroring)) { _ in
+            keyboardActive = false
+            isFullscreen = false
+            controller.stopMirroring()
+        }
+        .fullScreenCover(isPresented: $isFullscreen) {
+            RemoteFullscreenView(
+                controller: controller,
+                isPresented: $isFullscreen,
+                saveScreenshot: saveScreenshot,
+                stopMirroring: controller.stopMirroring
+            )
+        }
+        .alert("Nearby Control", isPresented: Binding(
+            get: { controller.errorMessage != nil || resultMessage != nil },
+            set: { if !$0 { controller.errorMessage = nil; resultMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { controller.errorMessage = nil; resultMessage = nil }
+        } message: {
+            Text(controller.errorMessage ?? resultMessage ?? "")
+        }
+    }
 
-            Button("Disconnect", role: .destructive) {
-                controller.disconnect()
-                browser.refresh()
+    @ViewBuilder
+    private var mirrorPanel: some View {
+        if controller.isMirroring {
+            RemoteScreenSurface(image: controller.frame, orientation: controller.orientation, action: send)
+                .frame(maxWidth: .infinity, minHeight: 280, maxHeight: 560)
+                .background(Color.black)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(.secondary.opacity(0.35), lineWidth: 1)
+                }
+        } else {
+            ContentUnavailableView(
+                "Screen Mirroring Is Off",
+                systemImage: "rectangle.slash",
+                description: Text("Viewing the screen is optional and only stays active while this page is open.")
+            )
+            .frame(minHeight: 260)
+
+            Button {
+                controller.startMirroring(to: device)
+            } label: {
+                Label(controller.isConnecting ? "Connecting…" : "View Screen", systemImage: "rectangle.on.rectangle")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(controller.isConnecting)
+        }
+    }
+
+    private var viewerActions: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Button { isFullscreen = true } label: {
+                    Label("Fullscreen", systemImage: "arrow.up.left.and.arrow.down.right")
+                }
+                Button(action: saveScreenshot) {
+                    Label("Screenshot", systemImage: "camera")
+                }
+                Button {
+                    keyboardActive.toggle()
+                } label: {
+                    Label(keyboardActive ? "Hide Keyboard" : "Keyboard", systemImage: "keyboard")
+                }
+            }
+            .buttonStyle(.bordered)
+
+            Button("Stop Mirroring", role: .destructive) {
+                keyboardActive = false
+                controller.stopMirroring()
             }
             .buttonStyle(.bordered)
         }
-        .padding()
     }
 
     private func send(_ gesture: RemoteScreenGesture) {
@@ -199,10 +260,19 @@ struct NearbyDeviceControlView: View {
         }
     }
 
-    private func sendKeyboardText() {
-        let text = remoteKeyboardText
-        remoteKeyboardText = ""
-        controller.type(text)
+    private func saveScreenshot() {
+        guard let image = controller.frame else {
+            resultMessage = "No remote frame is available yet."
+            return
+        }
+        RemotePhotoSaver.save(image, orientation: controller.orientation) { result in
+            switch result {
+            case .success:
+                resultMessage = "Screenshot saved to Photos."
+            case .failure(let error):
+                resultMessage = error.localizedDescription
+            }
+        }
     }
 }
 
@@ -378,29 +448,68 @@ private struct RemoteHardwareControls: View {
 private struct RemoteFullscreenView: View {
     @ObservedObject var controller: NearbyRemoteControlModel
     @Binding var isPresented: Bool
+    let saveScreenshot: () -> Void
+    let stopMirroring: () -> Void
+    @State private var controlsExpanded = true
+    @State private var keyboardActive = false
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack {
             Color.black.ignoresSafeArea()
-            RemoteScreenSurface(image: controller.frame) { gesture in
+            RemoteScreenSurface(image: controller.frame, orientation: controller.orientation) { gesture in
                 switch gesture {
                 case .touch(let phase, let point):
                     controller.touch(phase, x: point.x, y: point.y)
                 }
             }
             .ignoresSafeArea()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
-            Button {
-                isPresented = false
-            } label: {
-                Image(systemName: "arrow.down.right.and.arrow.up.left")
-                    .font(.headline)
-                    .padding(12)
-                    .background(.ultraThinMaterial, in: Circle())
+            VStack {
+                HStack {
+                    Spacer()
+                    Button { isPresented = false } label: {
+                        Image(systemName: "arrow.down.right.and.arrow.up.left")
+                            .font(.headline)
+                            .padding(12)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("Exit Fullscreen")
+                }
+                Spacer()
+                VStack(spacing: 10) {
+                    Button {
+                        withAnimation { controlsExpanded.toggle() }
+                    } label: {
+                        Image(systemName: controlsExpanded ? "chevron.down" : "chevron.up")
+                            .frame(width: 48, height: 20)
+                    }
+                    if controlsExpanded {
+                        RemoteHardwareControls(controller: controller)
+                        HStack {
+                            Button(action: saveScreenshot) { Label("Screenshot", systemImage: "camera") }
+                            Button { keyboardActive.toggle() } label: {
+                                Label(keyboardActive ? "Hide Keyboard" : "Keyboard", systemImage: "keyboard")
+                            }
+                            Button("Stop", role: .destructive) {
+                                keyboardActive = false
+                                stopMirroring()
+                                isPresented = false
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .labelStyle(.iconOnly)
+                    }
+                }
+                .padding(10)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
             }
             .foregroundStyle(.white)
             .padding(16)
-            .accessibilityLabel("Exit Fullscreen")
+
+            RemoteKeyboardCapture(isActive: $keyboardActive, controller: controller)
+                .frame(width: 1, height: 1)
+                .opacity(0.01)
         }
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
@@ -418,6 +527,7 @@ private struct RemoteNormalizedPoint {
 
 private struct RemoteScreenSurface: View {
     let image: UIImage?
+    let orientation: RemoteScreenOrientation
     let action: (RemoteScreenGesture) -> Void
     @State private var isTouchActive = false
 
@@ -426,10 +536,19 @@ private struct RemoteScreenSurface: View {
             ZStack {
                 Color.black
                 if let image {
-                    let fittedSize = aspectFit(image.size, inside: geometry.size)
-                    Image(uiImage: image)
-                        .resizable()
-                        .interpolation(.none)
+                    let fittedSize = aspectFit(orientedSize(image.size), inside: geometry.size)
+                    ZStack {
+                        Image(uiImage: image)
+                            .resizable()
+                            .interpolation(.none)
+                            .frame(
+                                width: orientation.isLandscape ? fittedSize.height : fittedSize.width,
+                                height: orientation.isLandscape ? fittedSize.width : fittedSize.height
+                            )
+                            .rotationEffect(rotationAngle)
+                        Color.clear
+                            .frame(width: fittedSize.width, height: fittedSize.height)
+                    }
                         .frame(width: fittedSize.width, height: fittedSize.height)
                         .contentShape(Rectangle())
                         .gesture(
@@ -457,7 +576,21 @@ private struct RemoteScreenSurface: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .aspectRatio(image.map { $0.size.width / $0.size.height } ?? 9 / 19.5, contentMode: .fit)
+        .aspectRatio(image.map { orientedSize($0.size).width / orientedSize($0.size).height } ?? 9 / 19.5, contentMode: .fit)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private var rotationAngle: Angle {
+        switch orientation {
+        case .portrait, .unknown: .zero
+        case .portraitUpsideDown: .degrees(180)
+        case .landscapeRight: .degrees(90)
+        case .landscapeLeft: .degrees(-90)
+        }
+    }
+
+    private func orientedSize(_ source: CGSize) -> CGSize {
+        orientation.isLandscape ? CGSize(width: source.height, height: source.width) : source
     }
 
     private func aspectFit(_ source: CGSize, inside destination: CGSize) -> CGSize {
@@ -467,11 +600,121 @@ private struct RemoteScreenSurface: View {
     }
 
     private func normalized(_ point: CGPoint, in size: CGSize) -> RemoteNormalizedPoint {
-        let x = min(max(point.x / max(size.width, 1), 0), 1)
-        let y = min(max(point.y / max(size.height, 1), 0), 1)
+        let displayX = min(max(point.x / max(size.width, 1), 0), 1)
+        let displayY = min(max(point.y / max(size.height, 1), 0), 1)
+        let (x, y): (Double, Double) = switch orientation {
+        case .portrait, .unknown: (displayX, displayY)
+        case .portraitUpsideDown: (1 - displayX, 1 - displayY)
+        case .landscapeRight: (displayY, 1 - displayX)
+        case .landscapeLeft: (1 - displayY, displayX)
+        }
         return RemoteNormalizedPoint(
             x: UInt16((x * Double(UInt16.max)).rounded()),
             y: UInt16((y * Double(UInt16.max)).rounded())
         )
+    }
+}
+
+private struct RemoteKeyboardCapture: UIViewRepresentable {
+    @Binding var isActive: Bool
+    let controller: NearbyRemoteControlModel
+
+    func makeCoordinator() -> Coordinator { Coordinator(controller: controller) }
+
+    func makeUIView(context: Context) -> UITextField {
+        let field = UITextField(frame: .zero)
+        field.delegate = context.coordinator
+        field.text = " "
+        field.autocorrectionType = .no
+        field.autocapitalizationType = .none
+        field.smartDashesType = .no
+        field.smartQuotesType = .no
+        field.spellCheckingType = .no
+        field.returnKeyType = .send
+        return field
+    }
+
+    func updateUIView(_ field: UITextField, context: Context) {
+        context.coordinator.controller = controller
+        if isActive, !field.isFirstResponder {
+            DispatchQueue.main.async { field.becomeFirstResponder() }
+        } else if !isActive, field.isFirstResponder {
+            field.resignFirstResponder()
+        }
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var controller: NearbyRemoteControlModel
+
+        init(controller: NearbyRemoteControlModel) {
+            self.controller = controller
+        }
+
+        func textField(
+            _ textField: UITextField,
+            shouldChangeCharactersIn range: NSRange,
+            replacementString string: String
+        ) -> Bool {
+            if string.isEmpty, range.length > 0 {
+                controller.backspace()
+            } else if !string.isEmpty {
+                controller.type(string)
+            }
+            textField.text = " "
+            return false
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            controller.type("\n")
+            return false
+        }
+    }
+}
+
+private enum RemotePhotoSaver {
+    static func save(
+        _ image: UIImage,
+        orientation: RemoteScreenOrientation,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        let image = oriented(image, orientation: orientation)
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized || status == .limited else {
+                DispatchQueue.main.async {
+                    completion(.failure(NSError(
+                        domain: "StikDebug.RemoteScreenshot",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Photos access was not granted."]
+                    )))
+                }
+                return
+            }
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAsset(from: image)
+            } completionHandler: { saved, error in
+                DispatchQueue.main.async {
+                    if saved {
+                        completion(.success(()))
+                    } else {
+                        completion(.failure(error ?? NSError(
+                            domain: "StikDebug.RemoteScreenshot",
+                            code: 2,
+                            userInfo: [NSLocalizedDescriptionKey: "Photos did not save the screenshot."]
+                        )))
+                    }
+                }
+            }
+        }
+    }
+
+    private static func oriented(_ image: UIImage, orientation: RemoteScreenOrientation) -> UIImage {
+        guard let cgImage = image.cgImage else { return image }
+        let value: UIImage.Orientation = switch orientation {
+        case .portrait, .unknown: .up
+        case .portraitUpsideDown: .down
+        case .landscapeRight: .right
+        case .landscapeLeft: .left
+        }
+        return UIImage(cgImage: cgImage, scale: image.scale, orientation: value)
     }
 }

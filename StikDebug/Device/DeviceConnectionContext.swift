@@ -20,6 +20,7 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
     static let shared = DeviceTargetManager()
 
     @Published private(set) var remoteDeviceName: String?
+    @Published private(set) var selectedTargetID = "local"
 
     private let lock = NSLock()
     private var remoteSnapshot: DeviceConnectionSnapshot?
@@ -65,7 +66,7 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
         lock.lock()
         remoteSnapshot = snapshot
         lock.unlock()
-        publishTargetChange(name: device.name)
+        publishTargetChange(id: device.id, name: device.name)
     }
 
     func selectThisDevice() {
@@ -75,11 +76,12 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
         remoteSnapshot = nil
         lock.unlock()
         guard changed else { return }
-        publishTargetChange(name: nil)
+        publishTargetChange(id: "local", name: nil)
     }
 
-    private func publishTargetChange(name: String?) {
+    private func publishTargetChange(id: String, name: String?) {
         let update = {
+            self.selectedTargetID = id
             self.remoteDeviceName = name
             JITEnableContext.shared.invalidateTunnel()
             markTunnelDisconnected()
@@ -99,6 +101,10 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
             _ = clear_simulated_location()
         }
     }
+}
+
+extension Notification.Name {
+    static let stopRemoteMirroring = Notification.Name("StikDebug.stopRemoteMirroring")
 }
 
 enum DeviceConnectionContext {

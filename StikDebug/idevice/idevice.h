@@ -7544,6 +7544,12 @@ struct IdeviceFfiError *remote_control_client_keyboard_tap(struct RemoteControlC
                                                            uint8_t modifiers);
 
 /**
+ * Reads the target's current SpringBoard interface orientation (0...4).
+ */
+struct IdeviceFfiError *remote_control_client_get_orientation(struct RemoteControlClientHandle *handle,
+                                                              uint8_t *out_orientation);
+
+/**
  * Rotates the target 90 degrees: 0 is left, 1 is right.
  */
 struct IdeviceFfiError *remote_control_client_rotate(struct RemoteControlClientHandle *handle,

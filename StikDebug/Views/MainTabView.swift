@@ -51,6 +51,7 @@ private enum ExternalLocationAction: Identifiable {
 
 struct MainTabView: View {
     @ObservedObject private var deviceTarget = DeviceTargetManager.shared
+    @ObservedObject private var nearbyDevices = NearbyDeviceBrowser.shared
     @AppStorage("primaryTabSelection") private var selection: String = AppFeature.home.id
     @State private var detachedFeature: AppFeature?
     @State private var didSetInitialHome = false
@@ -59,7 +60,10 @@ struct MainTabView: View {
     var body: some View {
         ZStack {
             Color.clear.ignoresSafeArea()
-
+            VStack(spacing: 0) {
+                if deviceTarget.remoteDeviceName != nil {
+                    deviceTargetBar
+                }
             TabView(selection: $selection) {
                 ForEach(AppFeature.mainTabs) { feature in
                     feature.destination
@@ -67,29 +71,8 @@ struct MainTabView: View {
                         .tag(feature.id)
                 }
             }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if let remoteName = deviceTarget.remoteDeviceName {
-                    HStack(spacing: 10) {
-                        Image(systemName: "iphone.gen3.radiowaves.left.and.right")
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Controlling \(remoteName)")
-                                .font(.caption.weight(.semibold))
-                            Text("All device tools target this device")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("Use This Device") {
-                            DeviceTargetManager.shared.selectThisDevice()
-                        }
-                        .font(.caption.weight(.semibold))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(.regularMaterial)
-                }
-            }
             .onAppear {
+                nearbyDevices.start()
                 ensureSelectionIsValid()
                 if !didSetInitialHome {
                     selection = AppFeature.home.id
@@ -134,6 +117,54 @@ struct MainTabView: View {
                         }
                 }
             }
+            }
+        }
+    }
+
+    private var deviceTargetBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Controlling \(deviceTarget.remoteDeviceName ?? "This Device")")
+                    .font(.caption.weight(.semibold))
+                Text("All device tools target this device")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Menu {
+                Button {
+                    NotificationCenter.default.post(name: .stopRemoteMirroring, object: nil)
+                    deviceTarget.selectThisDevice()
+                } label: {
+                    targetLabel("This Device", id: "local", icon: "iphone")
+                }
+                ForEach(nearbyDevices.devices.filter(\.isPaired)) { device in
+                    Button {
+                        guard let pairingFileURL = device.pairingFileURL else { return }
+                        deviceTarget.selectRemoteDevice(device, pairingFileURL: pairingFileURL)
+                    } label: {
+                        targetLabel(device.name, id: device.id, icon: "iphone.gen3.radiowaves.left.and.right")
+                    }
+                }
+            } label: {
+                Label("Target", systemImage: "chevron.up.chevron.down")
+                    .font(.caption.weight(.semibold))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+    }
+
+    private func targetLabel(_ title: String, id: String, icon: String) -> some View {
+        Label {
+            HStack {
+                Text(title)
+                if deviceTarget.selectedTargetID == id { Image(systemName: "checkmark") }
+            }
+        } icon: {
+            Image(systemName: icon)
         }
     }
 

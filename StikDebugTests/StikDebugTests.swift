@@ -78,4 +78,24 @@ struct StikDebugTests {
         #expect(ProcessInfo.processInfo.deviceVersion(from: "Mac14,2") == nil)
     }
 
+    @Test func batteryAnalyticsParsesPowerUtilMetrics() throws {
+        let data = Data(#"""
+        {
+            "last_value_CycleCount": 412,
+            "last_value_NominalChargeCapacity": 4210,
+            "last_value_MaximumFCC": 5000,
+            "last_value_AverageTemperature": 31.5
+        }
+        """#.utf8)
+        let sample = try #require(BatteryAnalyticsService.parse(
+            data: data,
+            sourceName: "Analytics-2026-09-22.ips"
+        ))
+        #expect(sample.cycleCount == 412)
+        #expect(sample.availableCapacity == 4210)
+        #expect(sample.originalCapacity == 5000)
+        #expect(abs((sample.healthPercent ?? 0) - 84.2) < 0.001)
+        #expect(sample.averageTemperature == 31.5)
+    }
+
 }

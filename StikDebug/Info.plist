@@ -26,6 +26,8 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>StikDebug discovers and connects to nearby development devices for remote viewing and control.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>StikDebug saves screenshots captured from a mirrored device to your photo library.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

@@ -7,6 +7,7 @@ import idevice
 struct RemotePairingRecord: Codable, Identifiable, Equatable {
     let id: UUID
     var displayName: String
+    var deviceIdentifier: String?
     var serviceIdentifier: String?
     let pairingFileName: String
     let hostAlternateIRK: Data
@@ -87,6 +88,7 @@ enum RemotePairingStore {
     static func save(
         pairingFile: OpaquePointer,
         displayName: String,
+        deviceIdentifier: String?,
         hostAlternateIRK: Data
     ) throws -> URL {
         lock.lock()
@@ -105,6 +107,7 @@ enum RemotePairingStore {
             RemotePairingRecord(
                 id: identifier,
                 displayName: displayName,
+                deviceIdentifier: deviceIdentifier,
                 serviceIdentifier: nil,
                 pairingFileName: fileName,
                 hostAlternateIRK: hostAlternateIRK,
@@ -118,7 +121,8 @@ enum RemotePairingStore {
 
     static func markConnected(
         pairingFileURL: URL,
-        to device: NearbyDevelopmentDevice
+        to device: NearbyDevelopmentDevice,
+        deviceIdentifier: String? = nil
     ) throws {
         lock.lock()
         defer { lock.unlock() }
@@ -129,6 +133,7 @@ enum RemotePairingStore {
             return
         }
         records[index].displayName = device.name
+        if let deviceIdentifier { records[index].deviceIdentifier = deviceIdentifier }
         records[index].serviceIdentifier = device.serviceIdentifier
         records[index].lastConnectedAt = Date()
         try saveRecords(records, in: directory)
@@ -332,10 +337,12 @@ final class RemotePairingCoordinator: NSObject, ObservableObject, NetServiceDele
             defer { rppairing_peer_device_free(peerDevice) }
 
             let deviceName = peerDevice?.pointee.name.map { String(cString: $0) } ?? "Paired Device"
+            let deviceIdentifier = peerDevice?.pointee.udid.map { String(cString: $0) }
 
             _ = try RemotePairingStore.save(
                 pairingFile: pairingFile,
                 displayName: deviceName,
+                deviceIdentifier: deviceIdentifier,
                 hostAlternateIRK: Data(hostIRK)
             )
             finish(success: "\(deviceName) is paired. It will appear when it advertises remote development services.")

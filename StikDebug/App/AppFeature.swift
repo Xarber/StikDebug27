@@ -15,6 +15,7 @@ enum AppFeature: String, CaseIterable, Identifiable {
     case profiles
     case processes
     case location
+    case battery
     case advancedTools = "advanced-tools"
     case settings
 
@@ -42,6 +43,8 @@ enum AppFeature: String, CaseIterable, Identifiable {
             return "Processes"
         case .location:
             return "Location"
+        case .battery:
+            return "Battery Health"
         case .advancedTools:
             return "Advanced Tools"
         case .settings:
@@ -69,6 +72,8 @@ enum AppFeature: String, CaseIterable, Identifiable {
             return "Inspect running apps"
         case .location:
             return "Simulate GPS location"
+        case .battery:
+            return "Battery history, cycles, temperature, and insights"
         case .advancedTools:
             return "Files, captures, crash reports, and device controls"
         case .settings:
@@ -80,6 +85,8 @@ enum AppFeature: String, CaseIterable, Identifiable {
         switch self {
         case .location:
             return "Location Simulation"
+        case .battery:
+            return "Battery Health"
         case .advancedTools:
             return "Advanced Tools"
         default:
@@ -107,6 +114,8 @@ enum AppFeature: String, CaseIterable, Identifiable {
             return "rectangle.stack.person.crop"
         case .location:
             return "location"
+        case .battery:
+            return "battery.100percent"
         case .advancedTools:
             return "wrench.and.screwdriver"
         case .settings:
@@ -135,6 +144,8 @@ enum AppFeature: String, CaseIterable, Identifiable {
             ProcessInspectorView()
         case .location:
             LocationSimulationView()
+        case .battery:
+            BatteryHealthView()
         case .advancedTools:
             AdvancedToolsView()
         case .settings:
@@ -145,5 +156,5 @@ enum AppFeature: String, CaseIterable, Identifiable {
 
 extension AppFeature {
     static let mainTabs: [AppFeature] = [.home, .tools, .devices, .settings]
-    static let toolList: [AppFeature] = [.scripts, .console, .deviceInfo, .profiles, .processes, .location, .advancedTools]
+    static let toolList: [AppFeature] = [.scripts, .console, .deviceInfo, .profiles, .processes, .location, .battery, .advancedTools]
 }

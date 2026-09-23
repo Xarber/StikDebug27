@@ -9,11 +9,12 @@ use idevice::{
     IdeviceError, ReadWrite, RsdService,
     core_device::{
         ButtonState, CallInfoBlob, DisplayServiceClient, HevcDepacketizer, IndigoHidClient,
-        KeyboardUsage, MainKeyboardService, OrientationServiceClient, RotationDirection, RtpPacket,
+        MainKeyboardService, OrientationServiceClient, RotationDirection, RtpPacket,
         TOUCHSCREEN_STATE_CONTACT, TOUCHSCREEN_STATE_RELEASE, UniversalHidServiceClient,
         build_screen_audio_offer, build_screen_video_offer, build_start_audio_parameters,
         build_start_video_parameters,
     },
+    springboardservices::{InterfaceOrientation, SpringBoardServicesClient},
     tcp::handle::UdpSocketHandle,
 };
 use uuid::Uuid;
@@ -30,6 +31,7 @@ pub struct RemoteControlClientHandle {
     universal_hid: Mutex<RemoteUniversalHidState>,
     buttons: Mutex<IndigoHidClient<Box<dyn ReadWrite>>>,
     orientation: Mutex<OrientationServiceClient<Box<dyn ReadWrite>>>,
+    springboard: Mutex<Option<SpringBoardServicesClient>>,
     display: Mutex<DisplayServiceClient<Box<dyn ReadWrite>>>,
     video: Mutex<RemoteVideoState>,
     _audio_udp: UdpSocketHandle,
@@ -126,8 +128,12 @@ pub unsafe extern "C" fn remote_control_client_connect_rsd(
         let media = start_screen_media_session(adapter, handshake).await?;
         let mut universal_hid = UniversalHidServiceClient::connect_rsd(adapter, handshake).await?;
         let keyboard = universal_hid.create_main_keyboard().await.ok();
+        if keyboard.is_some() {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
         let buttons = IndigoHidClient::connect_rsd(adapter, handshake).await?;
         let orientation = OrientationServiceClient::connect_rsd(adapter, handshake).await?;
+        let springboard = SpringBoardServicesClient::connect_rsd(adapter, handshake).await.ok();
 
         Ok(RemoteControlClientHandle {
             universal_hid: Mutex::new(RemoteUniversalHidState {
@@ -136,6 +142,7 @@ pub unsafe extern "C" fn remote_control_client_connect_rsd(
             }),
             buttons: Mutex::new(buttons),
             orientation: Mutex::new(orientation),
+            springboard: Mutex::new(springboard),
             display: Mutex::new(media.display),
             video: Mutex::new(RemoteVideoState {
                 socket: media.video_udp,
@@ -360,53 +367,76 @@ pub unsafe extern "C" fn remote_control_client_keyboard_tap(
     if handle.is_null() {
         return ffi_err!(IdeviceError::FfiInvalidArg);
     }
-    let usage = match KeyboardUsage::new(usage) {
-        Ok(usage) => usage,
-        Err(error) => return ffi_err!(IdeviceError::InternalError(error.to_string())),
-    };
     let handle = unsafe { &*handle };
-    let mut state = match handle.universal_hid.lock() {
-        Ok(state) => state,
+    let mut keyboard = match handle.buttons.lock() {
+        Ok(keyboard) => keyboard,
         Err(_) => {
             return ffi_err!(IdeviceError::InternalError(
                 "keyboard client lock poisoned".into()
             ));
         }
     };
-    let Some(mut keyboard) = state.keyboard.take() else {
-        return ffi_err!(IdeviceError::InternalError(
-            "the remote keyboard service is unavailable".into()
-        ));
-    };
-
-    let mut pressed = vec![usage];
-    for bit in 0..8 {
-        if modifiers & (1 << bit) != 0 {
-            match KeyboardUsage::new(0xE0 + bit) {
-                Ok(modifier) => pressed.push(modifier),
-                Err(error) => {
-                    state.keyboard = Some(keyboard);
-                    return ffi_err!(IdeviceError::InternalError(error.to_string()));
-                }
+    let result = run_sync_local(async {
+        for bit in 0u8..8 {
+            if modifiers & (1 << bit) != 0 {
+                keyboard
+                    .send_keyboard(0xE0 + u64::from(bit), ButtonState::Down)
+                    .await?;
             }
         }
-    }
-    let result = run_sync_local(async {
-        state
-            .client
-            .set_main_keyboard_usages(&mut keyboard, pressed)
-            .await
-            .map_err(|error| IdeviceError::InternalError(error.to_string()))?;
-        tokio::time::sleep(Duration::from_millis(28)).await;
-        state
-            .client
-            .set_main_keyboard_usages(&mut keyboard, std::iter::empty())
-            .await
-            .map_err(|error| IdeviceError::InternalError(error.to_string()))
+        keyboard.send_keyboard(u64::from(usage), ButtonState::Down).await?;
+        keyboard.send_keyboard(u64::from(usage), ButtonState::Up).await?;
+        for bit in (0u8..8).rev() {
+            if modifiers & (1 << bit) != 0 {
+                keyboard
+                    .send_keyboard(0xE0 + u64::from(bit), ButtonState::Up)
+                    .await?;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(12)).await;
+        Ok::<(), IdeviceError>(())
     });
-    state.keyboard = Some(keyboard);
     match result {
         Ok(()) => null_mut(),
+        Err(error) => ffi_err!(error),
+    }
+}
+
+/// Reads the target's current SpringBoard interface orientation (0...4).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remote_control_client_get_orientation(
+    handle: *mut RemoteControlClientHandle,
+    out_orientation: *mut u8,
+) -> *mut IdeviceFfiError {
+    if handle.is_null() || out_orientation.is_null() {
+        return ffi_err!(IdeviceError::FfiInvalidArg);
+    }
+    let handle = unsafe { &*handle };
+    let mut springboard = match handle.springboard.lock() {
+        Ok(springboard) => springboard,
+        Err(_) => {
+            return ffi_err!(IdeviceError::InternalError(
+                "orientation client lock poisoned".into()
+            ));
+        }
+    };
+    let Some(springboard) = springboard.as_mut() else {
+        return ffi_err!(IdeviceError::InternalError(
+            "the remote orientation service is unavailable".into()
+        ));
+    };
+    match run_sync_local(springboard.get_interface_orientation()) {
+        Ok(orientation) => {
+            let value = match orientation {
+                InterfaceOrientation::Portrait => 1,
+                InterfaceOrientation::PortraitUpsideDown => 2,
+                InterfaceOrientation::LandscapeRight => 3,
+                InterfaceOrientation::LandscapeLeft => 4,
+                InterfaceOrientation::Unknown => 0,
+            };
+            unsafe { *out_orientation = value };
+            null_mut()
+        }
         Err(error) => ffi_err!(error),
     }
 }

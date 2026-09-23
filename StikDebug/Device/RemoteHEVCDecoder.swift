@@ -32,12 +32,16 @@ final class RemoteHEVCDecoder {
     private var formatDescription: CMVideoFormatDescription?
     private var session: VTDecompressionSession?
     private var presentationValue: Int64 = 0
+    private var requiresSyncFrame = true
+    private let recoveryLock = NSLock()
+    private var recoveryRequested = false
 
     func decode(
         annexB accessUnit: Data,
         timestamp: UInt32,
         completion: @escaping @Sendable (Result<UIImage, Error>) -> Void
     ) throws {
+        if consumeRecoveryRequest() { resetForRecovery() }
         let units = try Self.nalUnits(in: accessUnit)
         guard !units.isEmpty else { throw RemoteHEVCDecoderError.malformedAccessUnit }
 
@@ -58,6 +62,7 @@ final class RemoteHEVCDecoder {
         }
 
         guard !sampleUnits.isEmpty else { return }
+        guard isSync || !requiresSyncFrame else { return }
         try ensureDecoder()
         guard let session, let formatDescription else {
             throw RemoteHEVCDecoderError.missingParameterSets
@@ -85,7 +90,11 @@ final class RemoteHEVCDecoder {
             sampleBuffer: sampleBuffer,
             flags: VTDecodeFrameFlags(rawValue: 1),
             infoFlagsOut: &flags
-        ) { status, infoFlags, imageBuffer, _, _, _ in
+        ) { [weak self] status, infoFlags, imageBuffer, _, _, _ in
+            if status != noErr {
+                self?.requestRecovery()
+                if status == -12911 { return }
+            }
             guard status == noErr, !infoFlags.contains(.frameDropped), let imageBuffer else {
                 completion(.failure(RemoteHEVCDecoderError.mediaFailure("decode", status)))
                 return
@@ -103,8 +112,13 @@ final class RemoteHEVCDecoder {
             completion(.success(UIImage(cgImage: image)))
         }
         guard status == noErr else {
+            resetForRecovery()
+            if status == -12911 {
+                throw RemoteHEVCDecoderError.missingParameterSets
+            }
             throw RemoteHEVCDecoderError.mediaFailure("submission", status)
         }
+        if isSync { requiresSyncFrame = false }
     }
 
     func stop() {
@@ -113,6 +127,26 @@ final class RemoteHEVCDecoder {
         VTDecompressionSessionInvalidate(session)
         self.session = nil
         formatDescription = nil
+    }
+
+    private func resetForRecovery() {
+        stop()
+        activeConfiguration.removeAll()
+        requiresSyncFrame = true
+    }
+
+    private func requestRecovery() {
+        recoveryLock.lock()
+        recoveryRequested = true
+        recoveryLock.unlock()
+    }
+
+    private func consumeRecoveryRequest() -> Bool {
+        recoveryLock.lock()
+        let requested = recoveryRequested
+        recoveryRequested = false
+        recoveryLock.unlock()
+        return requested
     }
 
     deinit {

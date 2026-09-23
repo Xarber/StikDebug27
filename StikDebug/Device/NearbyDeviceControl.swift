@@ -14,15 +14,18 @@ struct NearbyDevelopmentDevice: Identifiable, Equatable {
     let type: String
     let domain: String
     let serviceIdentifier: String
+    let deviceIdentifier: String?
     let addresses: [Data]
     let pairingRecordID: UUID?
     let pairingFileURL: URL?
 
     var id: String { pairingRecordID?.uuidString ?? discoveryID }
     var isPaired: Bool { pairingFileURL != nil }
+    var displayedIdentifier: String { deviceIdentifier ?? serviceIdentifier }
 }
 
 final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDelegate, NetServiceDelegate {
+    static let shared = NearbyDeviceBrowser()
     @Published private(set) var devices: [NearbyDevelopmentDevice] = []
     @Published private(set) var isSearching = false
 
@@ -93,6 +96,7 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
         let serviceIdentifier = txt.identifier ?? sender.name
         let pairingMatch = try? RemotePairingStore.matchingRecord(
             serviceIdentifier: serviceIdentifier,
+            deviceIdentifier: pairingMatch?.record.deviceIdentifier,
             authenticationTags: txt.authenticationTags
         )
         let device = NearbyDevelopmentDevice(
@@ -128,6 +132,7 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
                 type: first.type,
                 domain: first.domain,
                 serviceIdentifier: first.serviceIdentifier,
+                deviceIdentifier: first.deviceIdentifier,
                 addresses: addresses,
                 pairingRecordID: first.pairingRecordID,
                 pairingFileURL: first.pairingFileURL
@@ -197,6 +202,16 @@ enum RemoteHardwareButton: UInt8, CaseIterable, Identifiable {
 enum RemoteRotationDirection: UInt8 {
     case left
     case right
+}
+
+enum RemoteScreenOrientation: UInt8 {
+    case unknown = 0
+    case portrait = 1
+    case portraitUpsideDown = 2
+    case landscapeRight = 3
+    case landscapeLeft = 4
+
+    var isLandscape: Bool { self == .landscapeLeft || self == .landscapeRight }
 }
 
 enum RemoteTouchPhase: UInt8 {
@@ -292,6 +307,8 @@ final class RemoteDeviceSession: @unchecked Sendable {
                     )
                 }
 
+                let stableDeviceIdentifier = Self.deviceIdentifier(adapter: adapter, handshake: handshake)
+
                 var controller: OpaquePointer?
                 if let controlError = remote_control_client_connect_rsd(adapter, handshake, &controller) {
                     rsd_handshake_free(handshake)
@@ -310,8 +327,11 @@ final class RemoteDeviceSession: @unchecked Sendable {
                     throw IdeviceBridge.makeError(message: "The remote-control session was not created")
                 }
 
-                try? RemotePairingStore.markConnected(pairingFileURL: pairingURL, to: device)
-                DeviceTargetManager.shared.selectRemoteDevice(device, pairingFileURL: pairingURL)
+                try? RemotePairingStore.markConnected(
+                    pairingFileURL: pairingURL,
+                    to: device,
+                    deviceIdentifier: stableDeviceIdentifier
+                )
                 return RemoteDeviceSession(adapter: adapter, handshake: handshake, controller: controller)
             }
         }
@@ -399,6 +419,16 @@ final class RemoteDeviceSession: @unchecked Sendable {
         }
     }
 
+    func orientation() throws -> RemoteScreenOrientation {
+        try withController { controller in
+            var raw: UInt8 = 0
+            if let error = remote_control_client_get_orientation(controller, &raw) {
+                throw IdeviceBridge.consumeFFIError(error, fallback: "Unable to read the remote screen orientation")
+            }
+            return RemoteScreenOrientation(rawValue: raw) ?? .unknown
+        }
+    }
+
     func close() {
         lifetime.lock()
         guard !isClosing else {
@@ -481,6 +511,27 @@ final class RemoteDeviceSession: @unchecked Sendable {
         addressRank(lhs) < addressRank(rhs)
     }
 
+    private static func deviceIdentifier(adapter: OpaquePointer, handshake: OpaquePointer) -> String? {
+        try? IdeviceBridge.withConnectedClient(
+            fallback: "Failed to connect to lockdownd",
+            missingClientMessage: "Lockdownd client was not created",
+            connect: { lockdownd_connect_rsd(adapter, handshake, $0) },
+            cleanup: { lockdownd_client_free($0) }
+        ) { client in
+            var value: plist_t?
+            if let error = lockdownd_get_value(client, "UniqueDeviceID", nil, &value) {
+                throw IdeviceBridge.consumeFFIError(error, fallback: "Failed to read the device UUID")
+            }
+            defer { if let value { plist_free(value) } }
+            guard let value else { throw IdeviceBridge.makeError(message: "The device UUID was empty") }
+            var length: UInt64 = 0
+            guard let bytes = plist_get_string_ptr(value, &length), length > 0 else {
+                throw IdeviceBridge.makeError(message: "The device UUID was not a string")
+            }
+            return String(cString: bytes)
+        }
+    }
+
     private static func addressRank(_ address: Data) -> Int {
         address.withUnsafeBytes { buffer in
             guard let baseAddress = buffer.baseAddress else { return 3 }
@@ -496,6 +547,7 @@ final class RemoteDeviceSession: @unchecked Sendable {
 final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
     @Published private(set) var frame: UIImage?
     @Published private(set) var connectedDeviceName: String?
+    @Published private(set) var orientation: RemoteScreenOrientation = .portrait
     @Published private(set) var isConnecting = false
     @Published var errorMessage: String?
 
@@ -504,9 +556,13 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
     private let videoQueue = DispatchQueue(label: "com.stikdebug.nearby-remote-control.video", qos: .userInteractive)
     private let sessionLock = NSLock()
     private var session: RemoteDeviceSession?
+    private var requestedDevice: NearbyDevelopmentDevice?
+    private var requestGeneration = 0
 
-    func connect(to device: NearbyDevelopmentDevice) {
-        guard !isConnecting else { return }
+    var isMirroring: Bool { connectedDeviceName != nil || isConnecting }
+
+    func startMirroring(to device: NearbyDevelopmentDevice) {
+        let generation = updateRequest(device: device)
         isConnecting = true
         errorMessage = nil
 
@@ -514,15 +570,21 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
             guard let self else { return }
             do {
                 let newSession = try RemoteDeviceSession.connect(to: device)
+                guard self.isRequestCurrent(generation, device: device) else {
+                    newSession.close()
+                    return
+                }
                 let oldSession = self.replaceSession(with: newSession)
                 self.videoQueue.async { oldSession?.close() }
                 self.startVideoStream(for: newSession)
                 DispatchQueue.main.async {
+                    guard self.isRequestCurrent(generation, device: device) else { return }
                     self.connectedDeviceName = device.name
                     self.isConnecting = false
                 }
             } catch {
                 DispatchQueue.main.async {
+                    guard self.isRequestCurrent(generation, device: device) else { return }
                     self.isConnecting = false
                     self.errorMessage = error.localizedDescription
                 }
@@ -530,14 +592,32 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
         }
     }
 
-    func disconnect() {
+    func stopMirroring() {
+        cancelRequest(keepDevice: false)
         let oldSession = replaceSession(with: nil)
-        DeviceTargetManager.shared.selectThisDevice()
         videoQueue.async { oldSession?.close() }
         DispatchQueue.main.async { [weak self] in
             self?.frame = nil
             self?.connectedDeviceName = nil
+            self?.isConnecting = false
+            self?.orientation = .portrait
         }
+    }
+
+    func suspendMirroring() {
+        guard requestedDeviceSnapshot() != nil else { return }
+        cancelRequest(keepDevice: true)
+        let oldSession = replaceSession(with: nil)
+        videoQueue.async { oldSession?.close() }
+        frame = nil
+        connectedDeviceName = nil
+        isConnecting = false
+        errorMessage = nil
+    }
+
+    func resumeMirroring() {
+        guard let device = requestedDeviceSnapshot(), currentSession() == nil else { return }
+        startMirroring(to: device)
     }
 
     func tap(x: UInt16, y: UInt16) {
@@ -573,7 +653,11 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
     }
 
     func rotate(_ direction: RemoteRotationDirection) {
-        perform { try $0.rotate(direction) }
+        perform { session in
+            try session.rotate(direction)
+            let orientation = try session.orientation()
+            DispatchQueue.main.async { [weak self] in self?.orientation = orientation }
+        }
     }
 
     private func perform(_ action: @escaping (RemoteDeviceSession) throws -> Void) {
@@ -591,9 +675,19 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
         videoQueue.async { [weak self] in
             guard let self else { return }
             let decoder = RemoteHEVCDecoder()
+            var nextOrientationUpdate = Date.distantPast
             while self.isCurrent(session) {
                 do {
                     guard let unit = try session.nextVideoAccessUnit() else { continue }
+                    if Date() >= nextOrientationUpdate {
+                        nextOrientationUpdate = Date().addingTimeInterval(0.75)
+                        self.commandQueue.async { [weak self] in
+                            guard let self, self.isCurrent(session) else { return }
+                            if let value = try? session.orientation() {
+                                DispatchQueue.main.async { self.orientation = value }
+                            }
+                        }
+                    }
                     try decoder.decode(annexB: unit.data, timestamp: unit.timestamp) { [weak self] result in
                         guard let self, self.isCurrent(session) else { return }
                         DispatchQueue.main.async {
@@ -625,8 +719,37 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
     }
 
     deinit {
+        cancelRequest(keepDevice: false)
         let oldSession = replaceSession(with: nil)
         videoQueue.async { oldSession?.close() }
+    }
+
+    private func updateRequest(device: NearbyDevelopmentDevice) -> Int {
+        sessionLock.lock()
+        requestGeneration += 1
+        requestedDevice = device
+        let generation = requestGeneration
+        sessionLock.unlock()
+        return generation
+    }
+
+    private func cancelRequest(keepDevice: Bool) {
+        sessionLock.lock()
+        requestGeneration += 1
+        if !keepDevice { requestedDevice = nil }
+        sessionLock.unlock()
+    }
+
+    private func isRequestCurrent(_ generation: Int, device: NearbyDevelopmentDevice) -> Bool {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        return requestGeneration == generation && requestedDevice?.id == device.id
+    }
+
+    private func requestedDeviceSnapshot() -> NearbyDevelopmentDevice? {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        return requestedDevice
     }
 
     private func currentSession() -> RemoteDeviceSession? {
