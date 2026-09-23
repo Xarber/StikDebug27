@@ -149,6 +149,51 @@ enum RemotePairingStore {
         return try loadRecords(in: directory)
     }
 
+    static func importPairingFile(from sourceURL: URL) throws {
+        let accessing = sourceURL.startAccessingSecurityScopedResource()
+        defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
+
+        var pairingFile: OpaquePointer?
+        if let error = sourceURL.path.withCString({ rp_pairing_file_read($0, &pairingFile) }) {
+            throw IdeviceBridge.consumeFFIError(
+                error,
+                fallback: "This is not a compatible remote-pairing file"
+            )
+        }
+        guard let pairingFile else {
+            throw IdeviceBridge.makeError(message: "The remote-pairing file was empty")
+        }
+        defer { rp_pairing_file_free(pairingFile) }
+
+        lock.lock()
+        defer { lock.unlock() }
+        let directory = try storageDirectory()
+        let identifier = UUID()
+        let fileName = identifier.uuidString + ".plist"
+        let destination = directory.appendingPathComponent(fileName)
+        if let error = destination.path.withCString({ rp_pairing_file_write(pairingFile, $0) }) {
+            throw IdeviceBridge.consumeFFIError(error, fallback: "Unable to save the imported pairing file")
+        }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
+
+        var records = try loadRecords(in: directory)
+        let sourceName = sourceURL.deletingPathExtension().lastPathComponent
+        records.append(
+            RemotePairingRecord(
+                id: identifier,
+                displayName: sourceName.isEmpty ? "Imported Device" : sourceName,
+                deviceIdentifier: nil,
+                modelIdentifier: nil,
+                serviceIdentifier: nil,
+                pairingFileName: fileName,
+                hostAlternateIRK: Data(),
+                createdAt: Date(),
+                lastConnectedAt: nil
+            )
+        )
+        try saveRecords(records, in: directory)
+    }
+
     private static func storageDirectory() throws -> URL {
         let support = try FileManager.default.url(
             for: .applicationSupportDirectory,

@@ -6,12 +6,15 @@
 import SwiftUI
 import UIKit
 import Photos
+import UniformTypeIdentifiers
 
 struct NearbyDeviceControlView: View {
     @ObservedObject private var browser = NearbyDeviceBrowser.shared
     @ObservedObject private var deviceTarget = DeviceTargetManager.shared
     @StateObject private var pairing = RemotePairingCoordinator()
     @State private var isShowingPairing = false
+    @State private var isImportingPairingFile = false
+    @State private var importMessage: String?
 
     var body: some View {
         deviceList
@@ -28,6 +31,28 @@ struct NearbyDeviceControlView: View {
             browser.refresh()
         }) {
             RemotePairingView(pairing: pairing, isPresented: $isShowingPairing)
+        }
+        .fileImporter(
+            isPresented: $isImportingPairingFile,
+            allowedContentTypes: PairingFileStore.supportedContentTypes + [.data],
+            allowsMultipleSelection: false
+        ) { result in
+            do {
+                guard let url = try result.get().first else { return }
+                try RemotePairingStore.importPairingFile(from: url)
+                importMessage = "Remote pairing file imported. Nearby matching devices will now appear as paired."
+                browser.refresh()
+            } catch {
+                importMessage = error.localizedDescription
+            }
+        }
+        .alert("Pairing File", isPresented: Binding(
+            get: { importMessage != nil },
+            set: { if !$0 { importMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { importMessage = nil }
+        } message: {
+            Text(importMessage ?? "")
         }
     }
 
@@ -55,6 +80,21 @@ struct NearbyDeviceControlView: View {
                         }
                     } icon: {
                         Image(systemName: "plus.circle.fill")
+                    }
+                }
+
+                Button {
+                    isImportingPairingFile = true
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Import Remote Pairing File")
+                            Text("Use an existing compatible RPPairing identity")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "doc.badge.plus")
                     }
                 }
             }
@@ -124,7 +164,10 @@ struct NearbyDeviceControlView: View {
 private struct RemoteDeviceDetailView: View {
     let device: NearbyDevelopmentDevice
     @StateObject private var controller = NearbyRemoteControlModel()
+    @StateObject private var relay = StikServerRelay()
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("stikServerAddress") private var serverAddress = ""
+    @AppStorage("stikServerToken") private var serverToken = ""
     @State private var isFullscreen = false
     @State private var keyboardActive = false
     @State private var resultMessage: String?
@@ -146,6 +189,7 @@ private struct RemoteDeviceDetailView: View {
                 if controller.isMirroring {
                     RemoteHardwareControls(controller: controller)
                     viewerActions
+                    stikServerControls
                     RemoteKeyboardCapture(isActive: $keyboardActive, controller: controller)
                         .frame(width: 1, height: 1)
                         .opacity(0.01)
@@ -167,6 +211,7 @@ private struct RemoteDeviceDetailView: View {
         .navigationTitle(device.name)
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear {
+            relay.disconnect()
             if !isFullscreen { controller.stopMirroring() }
         }
         .onChange(of: scenePhase) { _, phase in
@@ -179,6 +224,7 @@ private struct RemoteDeviceDetailView: View {
         .onReceive(NotificationCenter.default.publisher(for: .stopRemoteMirroring)) { _ in
             keyboardActive = false
             isFullscreen = false
+            relay.disconnect()
             controller.stopMirroring()
         }
         .fullScreenCover(isPresented: $isFullscreen) {
@@ -186,7 +232,10 @@ private struct RemoteDeviceDetailView: View {
                 controller: controller,
                 isPresented: $isFullscreen,
                 saveScreenshot: saveScreenshot,
-                stopMirroring: controller.stopMirroring
+                stopMirroring: {
+                    relay.disconnect()
+                    controller.stopMirroring()
+                }
             )
         }
         .alert("Nearby Control", isPresented: Binding(
@@ -248,10 +297,57 @@ private struct RemoteDeviceDetailView: View {
 
             Button("Stop Mirroring", role: .destructive) {
                 keyboardActive = false
+                relay.disconnect()
                 controller.stopMirroring()
             }
             .buttonStyle(.bordered)
         }
+    }
+
+    private var stikServerControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("StikServer", systemImage: "network")
+                .font(.headline)
+            TextField("Server address, for example 100.64.0.10:8765", text: $serverAddress)
+                .textContentType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder)
+            SecureField("Private token (optional)", text: $serverToken)
+                .textContentType(.password)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                if relay.state == .connected {
+                    Button("Disconnect", role: .destructive) { relay.disconnect() }
+                        .buttonStyle(.bordered)
+                } else {
+                    Button {
+                        relay.connect(
+                            serverAddress: serverAddress,
+                            token: serverToken,
+                            device: device,
+                            controller: controller
+                        )
+                    } label: {
+                        Label("Share with StikServer", systemImage: "antenna.radiowaves.left.and.right")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(serverAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                Spacer()
+                Text(relay.state.title)
+                    .font(.caption)
+                    .foregroundStyle(relay.state == .connected ? .green : .secondary)
+                    .lineLimit(1)
+            }
+            Text("The relay remains active only while this device page and its screen stream are open.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func send(_ gesture: RemoteScreenGesture) {
@@ -425,6 +521,13 @@ private struct RemoteHardwareControls: View {
                 Button { controller.press(.mute) } label: { Label("Mute", systemImage: "speaker.slash") }
                 Button { controller.press(.siri) } label: { Label("Siri", systemImage: "waveform.circle") }
                 Divider()
+                Button { controller.toggleSoftwareKeyboard() } label: {
+                    Label(
+                        controller.isSoftwareKeyboardVisible ? "Hide Software Keyboard" : "Show Software Keyboard",
+                        systemImage: "keyboard"
+                    )
+                }
+                Divider()
                 Button { controller.rotate(.left) } label: { Label("Rotate Left", systemImage: "rotate.left") }
                 Button { controller.rotate(.right) } label: { Label("Rotate Right", systemImage: "rotate.right") }
             } label: {
@@ -453,6 +556,8 @@ private struct RemoteFullscreenView: View {
     let stopMirroring: () -> Void
     @State private var controlsExpanded = true
     @State private var keyboardActive = false
+    @State private var bubbleLocation: CGPoint?
+    @State private var dragOrigin: CGPoint?
 
     var body: some View {
         ZStack {
@@ -466,47 +571,32 @@ private struct RemoteFullscreenView: View {
             .ignoresSafeArea()
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
-            VStack {
-                HStack {
-                    Spacer()
-                    Button { isPresented = false } label: {
-                        Image(systemName: "arrow.down.right.and.arrow.up.left")
-                            .font(.headline)
-                            .padding(12)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                    .accessibilityLabel("Exit Fullscreen")
-                }
-                Spacer()
-                VStack(spacing: 10) {
-                    Button {
-                        withAnimation { controlsExpanded.toggle() }
-                    } label: {
-                        Image(systemName: controlsExpanded ? "chevron.down" : "chevron.up")
-                            .frame(width: 48, height: 20)
-                    }
-                    if controlsExpanded {
-                        RemoteHardwareControls(controller: controller)
-                        HStack {
-                            Button(action: saveScreenshot) { Label("Screenshot", systemImage: "camera") }
-                            Button { keyboardActive.toggle() } label: {
-                                Label(keyboardActive ? "Hide Keyboard" : "Keyboard", systemImage: "keyboard")
+            GeometryReader { geometry in
+                floatingControls
+                    .frame(maxWidth: controlsExpanded ? min(geometry.size.width - 24, 520) : nil)
+                    .position(controlLocation(in: geometry.size))
+                    .gesture(
+                        DragGesture(coordinateSpace: .local)
+                            .onChanged { value in
+                                let origin = dragOrigin ?? controlLocation(in: geometry.size)
+                                if dragOrigin == nil { dragOrigin = origin }
+                                bubbleLocation = clamped(
+                                    CGPoint(
+                                        x: origin.x + value.translation.width,
+                                        y: origin.y + value.translation.height
+                                    ),
+                                    in: geometry.size
+                                )
                             }
-                            Button("Stop", role: .destructive) {
-                                keyboardActive = false
-                                stopMirroring()
-                                isPresented = false
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .labelStyle(.iconOnly)
+                            .onEnded { _ in dragOrigin = nil }
+                    )
+                    .onAppear {
+                        if bubbleLocation == nil { bubbleLocation = defaultControlLocation(in: geometry.size) }
                     }
-                }
-                .padding(10)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                    .onChange(of: geometry.size) { _, newSize in
+                        bubbleLocation = clamped(controlLocation(in: newSize), in: newSize)
+                    }
             }
-            .foregroundStyle(.white)
-            .padding(16)
 
             RemoteKeyboardCapture(isActive: $keyboardActive, controller: controller)
                 .frame(width: 1, height: 1)
@@ -514,6 +604,74 @@ private struct RemoteFullscreenView: View {
         }
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
+    }
+
+    private var floatingControls: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(.snappy) { controlsExpanded.toggle() }
+                } label: {
+                    Image(systemName: controlsExpanded ? "chevron.down" : "chevron.up")
+                        .frame(width: 36, height: 24)
+                }
+                .accessibilityLabel(controlsExpanded ? "Collapse Controls" : "Expand Controls")
+
+                Button { isPresented = false } label: {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                        .frame(width: 36, height: 24)
+                }
+                .accessibilityLabel("Exit Fullscreen")
+            }
+            .buttonStyle(.bordered)
+
+            if controlsExpanded {
+                RemoteHardwareControls(controller: controller)
+                HStack {
+                    Button(action: saveScreenshot) { Label("Screenshot", systemImage: "camera") }
+                    Button { keyboardActive.toggle() } label: {
+                        Label(keyboardActive ? "Hide Input Keyboard" : "Input Keyboard", systemImage: "keyboard.badge.ellipsis")
+                    }
+                    Button { controller.toggleSoftwareKeyboard() } label: {
+                        Label(
+                            controller.isSoftwareKeyboardVisible ? "Hide Device Keyboard" : "Show Device Keyboard",
+                            systemImage: "keyboard"
+                        )
+                    }
+                    Button("Stop", role: .destructive) {
+                        keyboardActive = false
+                        stopMirroring()
+                        isPresented = false
+                    }
+                }
+                .buttonStyle(.bordered)
+                .labelStyle(.iconOnly)
+            }
+        }
+        .padding(10)
+        .foregroundStyle(.white)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+    }
+
+    private func defaultControlLocation(in size: CGSize) -> CGPoint {
+        CGPoint(x: size.width - 62, y: size.height - 62)
+    }
+
+    private func controlLocation(in size: CGSize) -> CGPoint {
+        let compactLocation = clamped(bubbleLocation ?? defaultControlLocation(in: size), in: size)
+        guard controlsExpanded else { return compactLocation }
+        return CGPoint(
+            x: size.width / 2,
+            y: min(max(compactLocation.y, 110), max(110, size.height - 110))
+        )
+    }
+
+    private func clamped(_ point: CGPoint, in size: CGSize) -> CGPoint {
+        CGPoint(
+            x: min(max(point.x, 54), max(54, size.width - 54)),
+            y: min(max(point.y, 54), max(54, size.height - 54))
+        )
     }
 }
 

@@ -420,6 +420,16 @@ final class RemoteDeviceSession: @unchecked Sendable {
         try keyboardTap(usage: 0x2A, modifiers: 0)
     }
 
+    func toggleSoftwareKeyboard() throws -> Bool {
+        try withController { controller in
+            var visible = false
+            if let error = remote_control_client_toggle_software_keyboard(controller, &visible) {
+                throw IdeviceBridge.consumeFFIError(error, fallback: "Unable to toggle the device keyboard")
+            }
+            return visible
+        }
+    }
+
     func rotate(_ direction: RemoteRotationDirection) throws {
         try withController { controller in
             if let error = remote_control_client_rotate(controller, direction.rawValue) {
@@ -558,6 +568,7 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
     @Published private(set) var connectedDeviceName: String?
     @Published private(set) var orientation: RemoteScreenOrientation = .portrait
     @Published private(set) var isConnecting = false
+    @Published private(set) var isSoftwareKeyboardVisible = false
     @Published var errorMessage: String?
 
     private let commandQueue = DispatchQueue(label: "com.stikdebug.nearby-remote-control.commands", qos: .userInteractive)
@@ -573,6 +584,7 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
     func startMirroring(to device: NearbyDevelopmentDevice) {
         let generation = updateRequest(device: device)
         isConnecting = true
+        isSoftwareKeyboardVisible = false
         errorMessage = nil
 
         commandQueue.async { [weak self] in
@@ -610,6 +622,7 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
             self?.connectedDeviceName = nil
             self?.isConnecting = false
             self?.orientation = .portrait
+            self?.isSoftwareKeyboardVisible = false
         }
     }
 
@@ -621,6 +634,7 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
         video.image = nil
         connectedDeviceName = nil
         isConnecting = false
+        isSoftwareKeyboardVisible = false
         errorMessage = nil
     }
 
@@ -661,8 +675,17 @@ final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
         perform { try $0.backspace() }
     }
 
+    func toggleSoftwareKeyboard() {
+        perform { [weak self] session in
+            let visible = try session.toggleSoftwareKeyboard()
+            DispatchQueue.main.async { [weak self] in
+                self?.isSoftwareKeyboardVisible = visible
+            }
+        }
+    }
+
     func rotate(_ direction: RemoteRotationDirection) {
-        perform { session in
+        perform { [weak self] session in
             try session.rotate(direction)
             let orientation = try session.orientation()
             DispatchQueue.main.async { [weak self] in self?.orientation = orientation }

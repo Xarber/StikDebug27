@@ -7544,6 +7544,12 @@ struct IdeviceFfiError *remote_control_client_keyboard_tap(struct RemoteControlC
                                                            uint8_t modifiers);
 
 /**
+ * Toggles the target's software keyboard and reports whether it is visible.
+ */
+struct IdeviceFfiError *remote_control_client_toggle_software_keyboard(struct RemoteControlClientHandle *handle,
+                                                                       bool *out_visible);
+
+/**
  * Reads the target's current SpringBoard interface orientation (0...4).
  */
 struct IdeviceFfiError *remote_control_client_get_orientation(struct RemoteControlClientHandle *handle,

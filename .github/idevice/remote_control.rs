@@ -133,7 +133,9 @@ pub unsafe extern "C" fn remote_control_client_connect_rsd(
         }
         let buttons = IndigoHidClient::connect_rsd(adapter, handshake).await?;
         let orientation = OrientationServiceClient::connect_rsd(adapter, handshake).await?;
-        let springboard = SpringBoardServicesClient::connect_rsd(adapter, handshake).await.ok();
+        let springboard = SpringBoardServicesClient::connect_rsd(adapter, handshake)
+            .await
+            .ok();
 
         Ok(RemoteControlClientHandle {
             universal_hid: Mutex::new(RemoteUniversalHidState {
@@ -384,8 +386,12 @@ pub unsafe extern "C" fn remote_control_client_keyboard_tap(
                     .await?;
             }
         }
-        keyboard.send_keyboard(u64::from(usage), ButtonState::Down).await?;
-        keyboard.send_keyboard(u64::from(usage), ButtonState::Up).await?;
+        keyboard
+            .send_keyboard(u64::from(usage), ButtonState::Down)
+            .await?;
+        keyboard
+            .send_keyboard(u64::from(usage), ButtonState::Up)
+            .await?;
         for bit in (0u8..8).rev() {
             if modifiers & (1 << bit) != 0 {
                 keyboard
@@ -399,6 +405,53 @@ pub unsafe extern "C" fn remote_control_client_keyboard_tap(
     match result {
         Ok(()) => null_mut(),
         Err(error) => ffi_err!(error),
+    }
+}
+
+/// Toggles whether the target displays its software keyboard.
+///
+/// The CoreDevice main-keyboard service represents an attached hardware
+/// keyboard. Removing it allows iOS to present the software keyboard; creating
+/// it again restores hardware-keyboard behavior.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remote_control_client_toggle_software_keyboard(
+    handle: *mut RemoteControlClientHandle,
+    out_visible: *mut bool,
+) -> *mut IdeviceFfiError {
+    if handle.is_null() || out_visible.is_null() {
+        return ffi_err!(IdeviceError::FfiInvalidArg);
+    }
+
+    let handle = unsafe { &*handle };
+    let mut state = match handle.universal_hid.lock() {
+        Ok(state) => state,
+        Err(_) => {
+            return ffi_err!(IdeviceError::InternalError(
+                "keyboard service lock poisoned".into()
+            ));
+        }
+    };
+
+    if let Some(mut keyboard) = state.keyboard.take() {
+        match run_sync_local(state.client.remove_main_keyboard(&mut keyboard)) {
+            Ok(()) => {
+                unsafe { *out_visible = true };
+                null_mut()
+            }
+            Err(error) => {
+                state.keyboard = Some(keyboard);
+                ffi_err!(IdeviceError::InternalError(error.to_string()))
+            }
+        }
+    } else {
+        match run_sync_local(state.client.create_main_keyboard()) {
+            Ok(keyboard) => {
+                state.keyboard = Some(keyboard);
+                unsafe { *out_visible = false };
+                null_mut()
+            }
+            Err(error) => ffi_err!(IdeviceError::InternalError(error.to_string())),
+        }
     }
 }
 
