@@ -46,6 +46,7 @@ final class StikServerConnection: ObservableObject {
     private var session: URLSession?
     private var socket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
+    private var connectionTimeoutTask: Task<Void, Never>?
     private weak var streamConsumer: StikServerRemoteControlModel?
     private var subscribedDeviceID: String?
 
@@ -58,13 +59,24 @@ final class StikServerConnection: ObservableObject {
 
         state = .connecting
         let configuration = URLSessionConfiguration.default
-        configuration.waitsForConnectivity = true
+        configuration.waitsForConnectivity = false
         configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 15
         let session = URLSession(configuration: configuration)
         let socket = session.webSocketTask(with: url)
         self.session = session
         self.socket = socket
         socket.resume()
+
+        connectionTimeoutTask = Task { [weak self, weak socket] in
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled,
+                  let self,
+                  self.socket === socket,
+                  self.state == .connecting else { return }
+            self.state = .failed("StikServer did not respond. Check that the link uses this computer's Wi-Fi address and that both devices can reach each other.")
+            self.finishTransport(clearDevices: false)
+        }
 
         receiveTask = Task { [weak self, weak socket] in
             guard let socket else { return }
@@ -90,6 +102,7 @@ final class StikServerConnection: ObservableObject {
     }
 
     deinit {
+        connectionTimeoutTask?.cancel()
         receiveTask?.cancel()
         socket?.cancel(with: .goingAway, reason: nil)
         session?.invalidateAndCancel()
@@ -121,6 +134,8 @@ final class StikServerConnection: ObservableObject {
     }
 
     private func receive(_ message: URLSessionWebSocketTask.Message) {
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
         switch message {
         case .data(let data):
             streamConsumer?.receiveFrame(data)
@@ -173,6 +188,8 @@ final class StikServerConnection: ObservableObject {
     }
 
     private func finishTransport(clearDevices: Bool) {
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
         receiveTask?.cancel()
         receiveTask = nil
         socket?.cancel(with: .goingAway, reason: nil)
