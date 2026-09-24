@@ -209,7 +209,7 @@ final class StikServerRelay: NSObject, ObservableObject {
                     }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
-                self.sendRelayError(command: command, message: "The relayed device did not connect in time")
+                self?.sendRelayError(command: command, message: "The relayed device did not connect in time")
             }
             return
         }
