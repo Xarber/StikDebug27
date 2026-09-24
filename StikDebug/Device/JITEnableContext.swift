@@ -70,6 +70,11 @@ final class JITEnableContext {
     private var handshake: OpaquePointer?
     private var connectedTargetID: String?
 
+    private let deviceConditionLock = NSLock()
+    private var deviceConditionRemoteServer: OpaquePointer?
+    private var deviceConditionClient: OpaquePointer?
+    private var deviceConditionTargetID: String?
+
     private let tunnelLock = NSLock()
     private var tunnelConnecting = false
     private var tunnelSemaphore: DispatchSemaphore?
@@ -97,6 +102,7 @@ final class JITEnableContext {
 
     deinit {
         stopSyslogRelay()
+        releaseDeviceConditionSession()
         if let handshake {
             rsd_handshake_free(handshake)
         }
@@ -259,6 +265,7 @@ final class JITEnableContext {
             throw tunnelError
         }
 
+        releaseDeviceConditionSession()
         if let handshake {
             rsd_handshake_free(handshake)
         }
@@ -279,6 +286,7 @@ final class JITEnableContext {
 
     func invalidateTunnel() {
         stopSyslogRelay()
+        releaseDeviceConditionSession()
         tunnelLock.lock()
         defer { tunnelLock.unlock() }
         if let handshake {
@@ -292,6 +300,71 @@ final class JITEnableContext {
         }
         connectedTargetID = nil
         lastTunnelError = nil
+    }
+
+    func withPersistentDeviceConditionClient<T>(
+        _ body: (OpaquePointer) throws -> T
+    ) throws -> T {
+        try ensureTunnel()
+        let targetID = DeviceConnectionContext.current.id
+
+        deviceConditionLock.lock()
+        defer { deviceConditionLock.unlock() }
+
+        if deviceConditionTargetID != targetID {
+            releaseDeviceConditionSessionLocked()
+        }
+
+        if deviceConditionClient == nil {
+            guard let adapter, let handshake else {
+                throw makeError("Tunnel is not connected")
+            }
+
+            var remoteServer: OpaquePointer?
+            if let error = remote_server_connect_rsd(adapter, handshake, &remoteServer) {
+                throw self.error(from: error, fallback: "Failed to connect to device conditions")
+            }
+            guard let remoteServer else {
+                throw makeError("Instruments service was not created")
+            }
+
+            var client: OpaquePointer?
+            if let error = condition_inducer_new(remoteServer, &client) {
+                remote_server_free(remoteServer)
+                throw self.error(from: error, fallback: "Failed to connect to device conditions")
+            }
+            guard let client else {
+                remote_server_free(remoteServer)
+                throw makeError("Device conditions service was not created")
+            }
+
+            deviceConditionRemoteServer = remoteServer
+            deviceConditionClient = client
+            deviceConditionTargetID = targetID
+        }
+
+        guard let deviceConditionClient else {
+            throw makeError("Device conditions service was not created")
+        }
+        return try body(deviceConditionClient)
+    }
+
+    func releaseDeviceConditionSession() {
+        deviceConditionLock.lock()
+        defer { deviceConditionLock.unlock() }
+        releaseDeviceConditionSessionLocked()
+    }
+
+    private func releaseDeviceConditionSessionLocked() {
+        if let deviceConditionClient {
+            condition_inducer_free(deviceConditionClient)
+            self.deviceConditionClient = nil
+        }
+        if let deviceConditionRemoteServer {
+            remote_server_free(deviceConditionRemoteServer)
+            self.deviceConditionRemoteServer = nil
+        }
+        deviceConditionTargetID = nil
     }
 
     private func withFreshDebugTunnel<T>(

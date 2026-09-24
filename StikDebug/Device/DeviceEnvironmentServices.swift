@@ -262,7 +262,10 @@ extension JITEnableContext {
     }
 
     func enableDeviceCondition(_ profile: DeviceConditionProfile) throws {
-        try withDeviceConditionClient { client in
+        // Xcode device conditions are scoped to the Instruments connection.
+        // Keep this client and its remote server alive until the user disables
+        // the condition, changes target, or the underlying tunnel closes.
+        try withPersistentDeviceConditionClient { client in
             if let error = condition_inducer_enable(client, profile.groupIdentifier, profile.identifier) {
                 throw IdeviceBridge.consumeFFIError(error, fallback: "Failed to enable \(profile.detail)")
             }
@@ -270,25 +273,12 @@ extension JITEnableContext {
     }
 
     func disableDeviceCondition() throws {
-        try withDeviceConditionClient { client in
+        try withPersistentDeviceConditionClient { client in
             if let error = condition_inducer_disable(client) {
                 throw IdeviceBridge.consumeFFIError(error, fallback: "Failed to disable device conditions")
             }
         }
-    }
-
-    private func withDeviceConditionClient<T>(_ body: (OpaquePointer) throws -> T) throws -> T {
-        try IdeviceBridge.withTunnelHandles(for: self) { adapter, handshake in
-            try IdeviceBridge.withRemoteServer(adapter: adapter, handshake: handshake) { server in
-                try IdeviceBridge.withConnectedClient(
-                    fallback: "Failed to connect to device conditions",
-                    missingClientMessage: "Device conditions service was not created",
-                    connect: { condition_inducer_new(server, $0) },
-                    cleanup: { condition_inducer_free($0) },
-                    body
-                )
-            }
-        }
+        releaseDeviceConditionSession()
     }
 
     private func withConfigurationClient<T>(_ body: (OpaquePointer) throws -> T) throws -> T {
