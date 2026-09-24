@@ -85,7 +85,11 @@ struct MainTabView: View {
                 }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { connectToSavedStikServer() }
+                if phase == .active {
+                    connectToSavedStikServer()
+                } else if phase == .background {
+                    StikServerRelayManager.shared.stop()
+                }
             }
             .onOpenURL { url in
                 handleURL(url)
@@ -186,8 +190,12 @@ struct MainTabView: View {
     }
 
     private func connectToSavedStikServer() {
-        guard !serverAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !serverAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            StikServerRelayManager.shared.stop()
+            return
+        }
         stikServer.connect(serverAddress: serverAddress, token: serverToken)
+        StikServerRelayManager.shared.start(serverAddress: serverAddress, token: serverToken)
     }
 
     private func targetLabel(_ title: String, id: String, icon: String) -> some View {

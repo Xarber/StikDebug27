@@ -194,6 +194,41 @@ enum RemotePairingStore {
         try saveRecords(records, in: directory)
     }
 
+    static func exportPairingFile(for device: NearbyDevelopmentDevice) throws -> URL {
+        guard let source = device.pairingFileURL,
+              FileManager.default.fileExists(atPath: source.path) else {
+            throw IdeviceBridge.makeError(message: "No pairing file is available for \(device.name)")
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PairingExports", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let destination = directory.appendingPathComponent(
+            exportFileName(deviceName: device.name, modelIdentifier: device.modelIdentifier ?? device.kind)
+        )
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        try FileManager.default.copyItem(at: source, to: destination)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
+        return destination
+    }
+
+    static func exportFileName(deviceName: String, modelIdentifier: String) -> String {
+        func slug(_ value: String, allowComma: Bool) -> String {
+            let allowed = allowComma ? "[^a-z0-9,._-]+" : "[^a-z0-9]+"
+            return value
+                .folding(options: [.diacriticInsensitive, .widthInsensitive], locale: .current)
+                .replacingOccurrences(of: "’", with: "")
+                .replacingOccurrences(of: "'", with: "")
+                .lowercased()
+                .replacingOccurrences(of: allowed, with: "-", options: .regularExpression)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        }
+        let name = slug(deviceName, allowComma: false)
+        let model = slug(modelIdentifier, allowComma: true)
+        return "\(name.isEmpty ? "ios-device" : name).\(model.isEmpty ? "ios" : model).plist"
+    }
+
     private static func storageDirectory() throws -> URL {
         let support = try FileManager.default.url(
             for: .applicationSupportDirectory,

@@ -236,6 +236,7 @@ private struct RemoteDeviceDetailView: View {
     @State private var isFullscreen = false
     @State private var keyboardActive = false
     @State private var resultMessage: String?
+    @State private var pairingExportURL: URL?
 
     var body: some View {
         ScrollView {
@@ -270,6 +271,14 @@ private struct RemoteDeviceDetailView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
+
+                if let pairingExportURL {
+                    ShareLink(item: pairingExportURL) {
+                        Label("Export Pairing File", systemImage: "square.and.arrow.up")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
             .padding()
             .frame(maxWidth: 720)
@@ -277,6 +286,13 @@ private struct RemoteDeviceDetailView: View {
         }
         .navigationTitle(device.name)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: device.id) {
+            do {
+                pairingExportURL = try RemotePairingStore.exportPairingFile(for: device)
+            } catch {
+                pairingExportURL = nil
+            }
+        }
         .onDisappear {
             relay.disconnect()
             if !isFullscreen { controller.stopMirroring() }

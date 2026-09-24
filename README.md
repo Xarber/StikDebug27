@@ -36,6 +36,8 @@
 
 Nearby control requires Developer Mode and a mounted developer image on the target. Once connected from **Advanced Tools → Nearby Device Control**, the target banner indicates that JIT, apps, logs, processes, location, profiles, files, diagnostics, captures, monitoring, backups, and device controls are operating on the nearby device. Use **Use This Device** in the banner to return every tool to the iPhone or iPad running StikDebug.
 
+When a private StikServer link is saved, StikDebug also advertises its locally paired devices to that server while the app is open. Discovery is automatic, relay loops are excluded, and screen transport starts only when a viewer requests it. Pairing identities can be exported from a paired device's page using a readable `device-name.model.plist` filename.
+
 ## Download
 > [!NOTE]
 > **Notice:** StikDebug is no longer available on the App Store. Please use the official download methods below.
@@ -104,7 +106,7 @@ StikDebug enables **JIT** for sideloaded apps on iOS 17.4+ without needing a com
 
 ### Requirements
 - macOS (latest recommended)
-- Xcode 16+ (Xcode 26+ preferred for iOS 26+ support)
+- Xcode 27 (the included workflow uses the Xcode 27 runner)
 - iOS device on iOS 17.4+ (for testing)
 - Git
 - Basic Xcode/Swift knowledge

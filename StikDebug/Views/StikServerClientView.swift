@@ -558,7 +558,10 @@ struct StikServerClientView: View {
                 }
             }
         }
-        .task { connection.connect(serverAddress: serverAddress, token: token) }
+        .task {
+            connection.connect(serverAddress: serverAddress, token: token)
+            StikServerRelayManager.shared.start(serverAddress: serverAddress, token: token)
+        }
     }
 
     private var emptyMessage: String {

@@ -24,10 +24,13 @@ enum BatteryAnalyticsService {
         return try loadArchive().samplesByDevice[targetID, default: []].sorted { $0.date < $1.date }
     }
 
-    static func syncFromDevice(target: DeviceConnectionSnapshot) throws -> [BatteryHealthSample] {
+    static func syncFromDevice(
+        target: DeviceConnectionSnapshot,
+        context: JITEnableContext = .shared
+    ) throws -> [BatteryHealthSample] {
         let existing = try storedSamples(for: target.id)
         let importedNames = Set(existing.map(\.sourceName))
-        let candidates = try JITEnableContext.shared.crashReports()
+        let candidates = try context.crashReports()
             .filter { entry in
                 let name = entry.name.lowercased()
                 return (name.contains("analytics-") || name.contains("log-aggregated-"))
@@ -37,7 +40,7 @@ enum BatteryAnalyticsService {
         var parsed: [BatteryHealthSample] = []
         for report in candidates {
             autoreleasepool {
-                guard let url = try? JITEnableContext.shared.downloadCrashReport(at: report.path),
+                guard let url = try? context.downloadCrashReport(at: report.path),
                       let data = try? Data(contentsOf: url),
                       let sample = parse(data: data, sourceName: report.name) else { return }
                 parsed.append(sample)

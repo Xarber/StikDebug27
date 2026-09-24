@@ -16,6 +16,7 @@ typealias SyslogErrorHandler = (NSError?) -> Void
 
 final class JITEnableContext {
     static let shared = JITEnableContext()
+    private let fixedTarget: DeviceConnectionSnapshot?
 
     private static func withCStringArray<R>(
         _ strings: [String], _ body: (UnsafePointer<UnsafePointer<CChar>?>?, UInt) -> R
@@ -90,6 +91,15 @@ final class JITEnableContext {
     var handshakeHandle: OpaquePointer? { handshake }
 
     private init() {
+        fixedTarget = nil
+        initializeLogger()
+    }
+
+    init(target: DeviceConnectionSnapshot) {
+        fixedTarget = target
+    }
+
+    private func initializeLogger() {
         let logURL = FileManager.default
             .urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("idevice_log.txt")
@@ -176,7 +186,7 @@ final class JITEnableContext {
     }
 
     private func createTunnel(hostname: String) throws -> TunnelHandles {
-        let target = DeviceConnectionContext.current
+        let target = fixedTarget ?? DeviceConnectionContext.current
         let pairingFile = try getPairingFile(at: target.pairingFileURL)
         defer { rp_pairing_file_free(pairingFile) }
 
@@ -253,7 +263,8 @@ final class JITEnableContext {
 
         do {
             var newTunnel = try createTunnel(hostname: "StikDebug")
-            if newTunnel.targetID != DeviceConnectionContext.current.id {
+            let expectedTarget = fixedTarget ?? DeviceConnectionContext.current
+            if newTunnel.targetID != expectedTarget.id {
                 newTunnel.free()
                 newTunnel = try createTunnel(hostname: "StikDebug")
             }
@@ -279,7 +290,8 @@ final class JITEnableContext {
     }
 
     func ensureTunnel() throws {
-        if adapter == nil || handshake == nil || connectedTargetID != DeviceConnectionContext.current.id {
+        let expectedTarget = fixedTarget ?? DeviceConnectionContext.current
+        if adapter == nil || handshake == nil || connectedTargetID != expectedTarget.id {
             try startTunnel()
         }
     }
@@ -306,7 +318,7 @@ final class JITEnableContext {
         _ body: (OpaquePointer) throws -> T
     ) throws -> T {
         try ensureTunnel()
-        let targetID = DeviceConnectionContext.current.id
+        let targetID = (fixedTarget ?? DeviceConnectionContext.current).id
 
         deviceConditionLock.lock()
         defer { deviceConditionLock.unlock() }
