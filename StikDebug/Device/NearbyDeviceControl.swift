@@ -765,8 +765,14 @@ final class NearbyRemoteControlModel: RemoteControlModel, @unchecked Sendable {
     }
 
     deinit {
-        cancelRequest(keepDevice: false)
-        let oldSession = replaceSession(with: nil)
+        // A Swift 6 deinitializer is nonisolated. These fields are protected by
+        // sessionLock, so tear them down directly instead of crossing MainActor.
+        sessionLock.lock()
+        requestGeneration += 1
+        requestedDevice = nil
+        let oldSession = session
+        session = nil
+        sessionLock.unlock()
         videoQueue.async { oldSession?.close() }
     }
 
