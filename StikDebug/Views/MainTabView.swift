@@ -52,7 +52,11 @@ private enum ExternalLocationAction: Identifiable {
 struct MainTabView: View {
     @ObservedObject private var deviceTarget = DeviceTargetManager.shared
     @ObservedObject private var nearbyDevices = NearbyDeviceBrowser.shared
+    @ObservedObject private var stikServer = StikServerConnection.shared
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("primaryTabSelection") private var selection: String = AppFeature.home.id
+    @AppStorage("stikServerAddress") private var serverAddress = ""
+    @AppStorage("stikServerToken") private var serverToken = ""
     @State private var detachedFeature: AppFeature?
     @State private var didSetInitialHome = false
     @State private var pendingLocationAction: ExternalLocationAction?
@@ -73,11 +77,15 @@ struct MainTabView: View {
             }
             .onAppear {
                 nearbyDevices.start()
+                connectToSavedStikServer()
                 ensureSelectionIsValid()
                 if !didSetInitialHome {
                     selection = AppFeature.home.id
                     didSetInitialHome = true
                 }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { connectToSavedStikServer() }
             }
             .onOpenURL { url in
                 handleURL(url)
@@ -147,6 +155,26 @@ struct MainTabView: View {
                         targetLabel(device.name, id: device.id, icon: device.systemImage)
                     }
                 }
+                if !stikServer.devices.filter(\.controllable).isEmpty {
+                    Divider()
+                    Menu("StikServer") {
+                        ForEach(stikServer.devices.filter(\.controllable)) { device in
+                            Button {
+                                deviceTarget.selectStikServerDevice(
+                                    device,
+                                    serverAddress: stikServer.serverAddress,
+                                    token: stikServer.accessToken
+                                )
+                            } label: {
+                                targetLabel(
+                                    device.name,
+                                    id: "stikserver|\(device.id)",
+                                    icon: device.systemImage
+                                )
+                            }
+                        }
+                    }
+                }
             } label: {
                 Label("Target", systemImage: "chevron.up.chevron.down")
                     .font(.caption.weight(.semibold))
@@ -155,6 +183,11 @@ struct MainTabView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.regularMaterial)
+    }
+
+    private func connectToSavedStikServer() {
+        guard !serverAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        stikServer.connect(serverAddress: serverAddress, token: serverToken)
     }
 
     private func targetLabel(_ title: String, id: String, icon: String) -> some View {

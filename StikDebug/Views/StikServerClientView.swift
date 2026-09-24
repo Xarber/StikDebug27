@@ -52,6 +52,7 @@ final class StikServerConnection: ObservableObject {
     private var socket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var connectionTimeoutTask: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
     private weak var streamConsumer: StikServerRemoteControlModel?
     private var subscribedDeviceID: String?
     private var currentServerAddress = ""
@@ -83,7 +84,9 @@ final class StikServerConnection: ObservableObject {
         let configuration = URLSessionConfiguration.default
         configuration.waitsForConnectivity = false
         configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 15
+        // A StikServer socket is an app-wide command transport, not a short web
+        // request. Keep it alive when its navigation page is no longer visible.
+        configuration.timeoutIntervalForResource = 7 * 24 * 60 * 60
         let session = URLSession(configuration: configuration)
         let socket = session.webSocketTask(with: url)
         self.session = session
@@ -98,6 +101,7 @@ final class StikServerConnection: ObservableObject {
                   self.state == .connecting else { return }
             self.state = .failed("StikServer did not respond. Check that the link uses this computer's Wi-Fi address and that both devices can reach each other.")
             self.finishTransport(clearDevices: false)
+            self.scheduleReconnect()
         }
 
         receiveTask = Task { [weak self, weak socket] in
@@ -114,11 +118,14 @@ final class StikServerConnection: ObservableObject {
                 guard let self, self.socket === socket else { return }
                 self.state = .failed(error.localizedDescription)
                 self.finishTransport(clearDevices: false)
+                self.scheduleReconnect()
             }
         }
     }
 
     func disconnect() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
         finishTransport(clearDevices: true)
         currentServerAddress = ""
         currentToken = ""
@@ -127,6 +134,7 @@ final class StikServerConnection: ObservableObject {
 
     deinit {
         connectionTimeoutTask?.cancel()
+        reconnectTask?.cancel()
         receiveTask?.cancel()
         socket?.cancel(with: .goingAway, reason: nil)
         session?.invalidateAndCancel()
@@ -276,7 +284,25 @@ final class StikServerConnection: ObservableObject {
             } catch {
                 guard let self, self.socket === socket else { return }
                 self.state = .failed(error.localizedDescription)
+                self.finishTransport(clearDevices: false)
+                self.scheduleReconnect()
             }
+        }
+    }
+
+    private func scheduleReconnect() {
+        guard !currentServerAddress.isEmpty else { return }
+        let address = currentServerAddress
+        let token = currentToken
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, let self,
+                  self.currentServerAddress == address,
+                  self.currentToken == token,
+                  self.state != .connected else { return }
+            self.reconnectTask = nil
+            self.connect(serverAddress: address, token: token)
         }
     }
 
