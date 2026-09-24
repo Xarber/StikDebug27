@@ -25,12 +25,14 @@ enum BatteryAnalyticsService {
     }
 
     static func syncFromDevice(target: DeviceConnectionSnapshot) throws -> [BatteryHealthSample] {
+        let existing = try storedSamples(for: target.id)
+        let importedNames = Set(existing.map(\.sourceName))
         let candidates = try JITEnableContext.shared.crashReports()
             .filter { entry in
                 let name = entry.name.lowercased()
-                return name.contains("analytics-") || name.contains("log-aggregated-")
+                return (name.contains("analytics-") || name.contains("log-aggregated-"))
+                    && !importedNames.contains(entry.name)
             }
-            .prefix(40)
 
         var parsed: [BatteryHealthSample] = []
         for report in candidates {

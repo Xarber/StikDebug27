@@ -75,7 +75,7 @@ struct BatteryHealthView: View {
         }
         .navigationTitle("Battery Health")
         .task {
-            if model.samples.isEmpty { model.refresh() }
+            model.refresh()
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -132,7 +132,7 @@ struct BatteryHealthView: View {
             ContentUnavailableView(
                 "No Battery History Yet",
                 systemImage: "battery.0percent",
-                description: Text("Tap refresh to read analytics from the selected device, or import Analytics/log-aggregated files from Files.")
+                description: Text("StikDebug automatically reads the available Analytics history from the selected device. You can also import Analytics/log-aggregated files from Files.")
             )
         }
     }
