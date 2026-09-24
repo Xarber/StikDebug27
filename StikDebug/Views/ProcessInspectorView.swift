@@ -368,6 +368,33 @@ final class ProcessInspectorViewModel: ObservableObject {
     func refresh() {
         guard !isRefreshing else { return }
         isRefreshing = true
+        if let relay = DeviceConnectionContext.current.stikServer {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let event = try await StikServerConnection.shared.request(
+                        "processes",
+                        deviceID: relay.deviceID,
+                        expecting: "processes"
+                    )
+                    let dictionaries = (event["processes"] as? [[String: Any]] ?? []).map { process in
+                        NSMutableDictionary(dictionary: [
+                            "pid": process["pid"] ?? 0,
+                            "path": process["name"] ?? "Unknown",
+                            "name": process["realAppName"] ?? process["name"] ?? "Unknown"
+                        ])
+                    }
+                    processes = dictionaries.compactMap(ProcessInfoEntry.init(dictionary:))
+                    lastUpdated = Date()
+                } catch {
+                    errorAlertTitle = "Failed to Load Processes"
+                    errorAlertMessage = error.localizedDescription
+                    showErrorAlert = true
+                }
+                isRefreshing = false
+            }
+            return
+        }
         Task.detached(priority: .utility) { [weak self] in
             guard let self else { return }
             var err: NSError?
@@ -420,6 +447,33 @@ final class ProcessInspectorViewModel: ObservableObject {
                 self.showActionAlert = true
             }
         }
+        if let relay = DeviceConnectionContext.current.stikServer {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let command = action == .kill ? "killProcess" : "signalProcess"
+                    var fields: [String: Any] = ["pid": targetPID]
+                    if action != .kill { fields["signal"] = Int(action.signal) }
+                    let result = try await StikServerConnection.shared.request(
+                        command,
+                        deviceID: relay.deviceID,
+                        fields: fields,
+                        expecting: "commandResult"
+                    )
+                    guard result["ok"] as? Bool == true else {
+                        throw NSError(
+                            domain: "StikServer",
+                            code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: result["message"] as? String ?? "Process command failed"]
+                        )
+                    }
+                    finishControl(action, pid: targetPID, error: nil)
+                } catch {
+                    finishControl(action, pid: targetPID, error: error)
+                }
+            }
+            return
+        }
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             var err: NSError?
@@ -449,5 +503,21 @@ final class ProcessInspectorViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    private func finishControl(_ action: ProcessControlAction, pid: Int, error: Error?) {
+        controlTimeoutTask?.cancel()
+        controlTimeoutTask = nil
+        guard activeControlState?.pid == pid && activeControlState?.action == action else { return }
+        activeControlState = nil
+        if let error {
+            actionAlertTitle = action.failureTitle
+            actionAlertMessage = error.localizedDescription
+        } else {
+            actionAlertTitle = action.successTitle
+            actionAlertMessage = action.successMessage(for: pid)
+            refresh()
+        }
+        showActionAlert = true
     }
 }

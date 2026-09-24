@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 struct NearbyDeviceControlView: View {
     @ObservedObject private var browser = NearbyDeviceBrowser.shared
     @ObservedObject private var deviceTarget = DeviceTargetManager.shared
+    @ObservedObject private var stikServer = StikServerConnection.shared
     @StateObject private var pairing = RemotePairingCoordinator()
     @State private var isShowingPairing = false
     @State private var isImportingPairingFile = false
@@ -27,7 +28,12 @@ struct NearbyDeviceControlView: View {
                 Button { browser.refresh() } label: { Image(systemName: "arrow.clockwise") }
             }
         }
-        .onAppear { browser.start() }
+        .onAppear {
+            browser.start()
+            if !serverAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                stikServer.connect(serverAddress: serverAddress, token: serverToken)
+            }
+        }
         .sheet(isPresented: $isShowingPairing, onDismiss: {
             pairing.cancel()
             browser.refresh()
@@ -185,6 +191,27 @@ struct NearbyDeviceControlView: View {
                     deviceTarget.selectRemoteDevice(device, pairingFileURL: pairingFileURL)
                 } label: {
                     Label(device.name, systemImage: deviceTarget.selectedTargetID == device.id ? "checkmark" : device.systemImage)
+                }
+            }
+            if !stikServer.devices.filter(\.controllable).isEmpty {
+                Divider()
+                Menu("StikServer") {
+                    ForEach(stikServer.devices.filter(\.controllable)) { device in
+                        Button {
+                            deviceTarget.selectStikServerDevice(
+                                device,
+                                serverAddress: serverAddress,
+                                token: serverToken
+                            )
+                        } label: {
+                            Label(
+                                device.name,
+                                systemImage: deviceTarget.selectedTargetID == "stikserver|\(device.id)"
+                                    ? "checkmark"
+                                    : device.systemImage
+                            )
+                        }
+                    }
                 }
             }
         } label: {

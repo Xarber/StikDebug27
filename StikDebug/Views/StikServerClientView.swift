@@ -24,6 +24,8 @@ struct StikServerDevice: Identifiable, Equatable, Decodable {
 
 @MainActor
 final class StikServerConnection: ObservableObject {
+    static let shared = StikServerConnection()
+
     enum State: Equatable {
         case disconnected
         case connecting
@@ -43,14 +45,32 @@ final class StikServerConnection: ObservableObject {
     @Published private(set) var state: State = .disconnected
     @Published private(set) var devices: [StikServerDevice] = []
 
+    var serverAddress: String { currentServerAddress }
+    var accessToken: String { currentToken }
+
     private var session: URLSession?
     private var socket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var connectionTimeoutTask: Task<Void, Never>?
     private weak var streamConsumer: StikServerRemoteControlModel?
     private var subscribedDeviceID: String?
+    private var currentServerAddress = ""
+    private var currentToken = ""
+    private var eventObservers: [UUID: (String, [String: Any]) -> Void] = [:]
+
+    private struct PendingRequest {
+        let deviceID: String
+        let eventType: String
+        let command: String?
+        let continuation: CheckedContinuation<[String: Any], Error>
+        let timeout: Task<Void, Never>
+    }
+    private var pendingRequests: [UUID: PendingRequest] = [:]
 
     func connect(serverAddress: String, token: String) {
+        let normalized = serverAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized == currentServerAddress, token == currentToken,
+           state == .connected || state == .connecting { return }
         disconnect()
         guard let url = Self.webSocketURL(from: serverAddress, token: token) else {
             state = .failed("Invalid StikServer address")
@@ -58,6 +78,8 @@ final class StikServerConnection: ObservableObject {
         }
 
         state = .connecting
+        currentServerAddress = normalized
+        currentToken = token
         let configuration = URLSessionConfiguration.default
         configuration.waitsForConnectivity = false
         configuration.timeoutIntervalForRequest = 15
@@ -98,6 +120,8 @@ final class StikServerConnection: ObservableObject {
 
     func disconnect() {
         finishTransport(clearDevices: true)
+        currentServerAddress = ""
+        currentToken = ""
         state = .disconnected
     }
 
@@ -133,6 +157,61 @@ final class StikServerConnection: ObservableObject {
         send(payload)
     }
 
+    func request(
+        _ name: String,
+        deviceID: String,
+        fields: [String: Any] = [:],
+        expecting eventType: String,
+        timeout: Duration = .seconds(15)
+    ) async throws -> [String: Any] {
+        guard state == .connected else { throw StikServerRequestError.notConnected }
+        let requestID = UUID()
+        return try await withCheckedThrowingContinuation { continuation in
+            let timeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard !Task.isCancelled else { return }
+                self?.failRequest(requestID, error: StikServerRequestError.timedOut)
+            }
+            pendingRequests[requestID] = PendingRequest(
+                deviceID: deviceID,
+                eventType: eventType,
+                command: eventType == "commandResult" ? name : nil,
+                continuation: continuation,
+                timeout: timeoutTask
+            )
+            command(name, deviceID: deviceID, fields: fields)
+        }
+    }
+
+    func requestBatteryHistory(deviceID: String) async throws -> [String: Any] {
+        guard state == .connected else { throw StikServerRequestError.notConnected }
+        let requestID = UUID()
+        return try await withCheckedThrowingContinuation { continuation in
+            let timeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(15))
+                guard !Task.isCancelled else { return }
+                self?.failRequest(requestID, error: StikServerRequestError.timedOut)
+            }
+            pendingRequests[requestID] = PendingRequest(
+                deviceID: deviceID,
+                eventType: "batteryHistory",
+                command: nil,
+                continuation: continuation,
+                timeout: timeoutTask
+            )
+            send(["type": "batteryHistory", "deviceId": deviceID])
+        }
+    }
+
+    @discardableResult
+    func observeEvents(_ observer: @escaping (String, [String: Any]) -> Void) -> UUID {
+        let id = UUID()
+        eventObservers[id] = observer
+        return id
+    }
+
+    func removeEventObserver(_ id: UUID) { eventObservers[id] = nil }
+
     private func receive(_ message: URLSessionWebSocketTask.Message) {
         connectionTimeoutTask?.cancel()
         connectionTimeoutTask = nil
@@ -158,13 +237,27 @@ final class StikServerConnection: ObservableObject {
                 }
                 streamConsumer?.subscriptionReady()
             case "deviceEvent":
-                guard object["deviceId"] as? String == subscribedDeviceID,
+                guard let deviceID = object["deviceId"] as? String,
                       let event = object["event"] as? [String: Any] else { return }
-                streamConsumer?.receiveEvent(event)
+                resolvePending(deviceID: deviceID, event: event)
+                eventObservers.values.forEach { $0(deviceID, event) }
+                if deviceID == subscribedDeviceID { streamConsumer?.receiveEvent(event) }
             case "error":
                 let message = object["message"] as? String ?? "StikServer request failed"
-                if let streamConsumer { streamConsumer.subscriptionFailed(message) }
-                else { state = .failed(message) }
+                if let requestID = pendingRequests.keys.first {
+                    failRequest(
+                        requestID,
+                        error: NSError(
+                            domain: "StikServer",
+                            code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: message]
+                        )
+                    )
+                } else if let streamConsumer {
+                    streamConsumer.subscriptionFailed(message)
+                } else {
+                    state = .failed(message)
+                }
             default:
                 break
             }
@@ -199,7 +292,31 @@ final class StikServerConnection: ObservableObject {
         streamConsumer?.transportStopped()
         streamConsumer = nil
         subscribedDeviceID = nil
+        let requests = pendingRequests
+        pendingRequests.removeAll()
+        requests.values.forEach {
+            $0.timeout.cancel()
+            $0.continuation.resume(throwing: StikServerRequestError.notConnected)
+        }
         if clearDevices { devices = [] }
+    }
+
+    private func resolvePending(deviceID: String, event: [String: Any]) {
+        guard let eventType = event["type"] as? String,
+              let match = pendingRequests.first(where: { _, pending in
+                  pending.deviceID == deviceID
+                      && pending.eventType == eventType
+                      && (pending.command == nil || pending.command == event["command"] as? String)
+              }) else { return }
+        pendingRequests[match.key] = nil
+        match.value.timeout.cancel()
+        match.value.continuation.resume(returning: event)
+    }
+
+    private func failRequest(_ id: UUID, error: Error) {
+        guard let pending = pendingRequests.removeValue(forKey: id) else { return }
+        pending.timeout.cancel()
+        pending.continuation.resume(throwing: error)
     }
 
     private static func webSocketURL(from value: String, token explicitToken: String) -> URL? {
@@ -218,6 +335,18 @@ final class StikServerConnection: ObservableObject {
         components.path = "/viewer"
         components.queryItems = token.isEmpty ? nil : [URLQueryItem(name: "token", value: token)]
         return components.url
+    }
+}
+
+enum StikServerRequestError: LocalizedError {
+    case notConnected
+    case timedOut
+
+    var errorDescription: String? {
+        switch self {
+        case .notConnected: "StikServer is not connected."
+        case .timedOut: "StikServer did not return a response in time."
+        }
     }
 }
 
@@ -355,7 +484,7 @@ final class StikServerRemoteControlModel: RemoteControlModel {
 struct StikServerClientView: View {
     let serverAddress: String
     let token: String
-    @StateObject private var connection = StikServerConnection()
+    @ObservedObject private var connection = StikServerConnection.shared
 
     var body: some View {
         List {
@@ -450,6 +579,18 @@ private struct StikServerDeviceDetailView: View {
                         .frame(width: 1, height: 1)
                         .opacity(0.01)
                 }
+
+                Button {
+                    DeviceTargetManager.shared.selectStikServerDevice(
+                        device,
+                        serverAddress: connection.serverAddress,
+                        token: connection.accessToken
+                    )
+                } label: {
+                    Label("Use for All StikDebug Tools", systemImage: "scope")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
             }
             .padding()
             .frame(maxWidth: 720)

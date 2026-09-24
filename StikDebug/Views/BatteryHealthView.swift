@@ -19,6 +19,27 @@ private final class BatteryHealthViewModel: ObservableObject {
         guard !isLoading else { return }
         isLoading = true
         statusMessage = nil
+        if let relay = target.stikServer {
+            Task { @MainActor in
+                do {
+                    _ = try? await StikServerConnection.shared.request(
+                        "batteryAnalytics",
+                        deviceID: relay.deviceID,
+                        expecting: "batteryAnalytics",
+                        timeout: .seconds(45)
+                    )
+                    let event = try await StikServerConnection.shared.requestBatteryHistory(deviceID: relay.deviceID)
+                    samples = Self.relaySamples(event["history"] as? [[String: Any]] ?? [])
+                    statusMessage = samples.isEmpty
+                        ? "No battery metrics were found in the available analytics files."
+                        : "Battery history updated through StikServer."
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+                isLoading = false
+            }
+            return
+        }
         Task.detached { [target] in
             do {
                 let samples = try BatteryAnalyticsService.syncFromDevice(target: target)
@@ -34,6 +55,24 @@ private final class BatteryHealthViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    private static func relaySamples(_ history: [[String: Any]]) -> [BatteryHealthSample] {
+        let formatter = ISO8601DateFormatter()
+        return history.compactMap { item in
+            let source = item["sourceName"] as? String ?? "StikServer"
+            let date = (item["date"] as? String).flatMap(formatter.date(from:)) ?? Date()
+            return BatteryHealthSample(
+                id: UUID(),
+                date: date,
+                healthPercent: (item["health"] as? NSNumber)?.doubleValue,
+                cycleCount: (item["cycles"] as? NSNumber)?.intValue,
+                availableCapacity: (item["fullCapacity"] as? NSNumber)?.intValue,
+                originalCapacity: (item["designCapacity"] as? NSNumber)?.intValue,
+                averageTemperature: (item["temperature"] as? NSNumber)?.doubleValue,
+                sourceName: source
+            )
+        }.sorted { $0.date < $1.date }
     }
 
     func importFiles(_ urls: [URL]) {

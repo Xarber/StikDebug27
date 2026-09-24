@@ -528,6 +528,29 @@ struct DeviceControlsView: View {
 
     private func power(_ action: DevicePowerAction) {
         isWorking = true
+        if let relay = DeviceConnectionContext.current.stikServer {
+            Task { @MainActor in
+                do {
+                    let result = try await StikServerConnection.shared.request(
+                        action.rawValue,
+                        deviceID: relay.deviceID,
+                        expecting: "commandResult"
+                    )
+                    guard result["ok"] as? Bool == true else {
+                        throw NSError(
+                            domain: "StikServer",
+                            code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: result["message"] as? String ?? "The power command failed."]
+                        )
+                    }
+                    message = "\(action.title) request sent."
+                } catch {
+                    self.error = error.localizedDescription
+                }
+                isWorking = false
+            }
+            return
+        }
         Task.detached {
             do {
                 try JITEnableContext.shared.performPowerAction(action)

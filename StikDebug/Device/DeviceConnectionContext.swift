@@ -14,6 +14,15 @@ struct DeviceConnectionSnapshot: @unchecked Sendable {
     let addresses: [Data]
     let pairingFileURL: URL
     let isRemote: Bool
+    let stikServer: StikServerDeviceTarget?
+
+    var isStikServer: Bool { stikServer != nil }
+}
+
+struct StikServerDeviceTarget: Sendable, Equatable {
+    let serverAddress: String
+    let token: String
+    let deviceID: String
 }
 
 final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
@@ -51,7 +60,8 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
             displayName: "This \(DevicePresentation.localKind)",
             addresses: [data],
             pairingFileURL: PairingFileStore.prepareURL(),
-            isRemote: false
+            isRemote: false,
+            stikServer: nil
         )
     }
 
@@ -62,12 +72,38 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
             displayName: device.name,
             addresses: device.addresses,
             pairingFileURL: pairingFileURL,
-            isRemote: true
+            isRemote: true,
+            stikServer: nil
         )
         lock.lock()
         remoteSnapshot = snapshot
         lock.unlock()
         publishTargetChange(id: device.id, name: device.name, systemImage: device.systemImage)
+    }
+
+    func selectStikServerDevice(_ device: StikServerDevice, serverAddress: String, token: String) {
+        clearLocationBeforeTargetChange()
+        let snapshot = DeviceConnectionSnapshot(
+            id: "stikserver|\(device.id)",
+            displayName: device.name,
+            addresses: [],
+            pairingFileURL: PairingFileStore.prepareURL(),
+            isRemote: true,
+            stikServer: StikServerDeviceTarget(
+                serverAddress: serverAddress,
+                token: token,
+                deviceID: device.id
+            )
+        )
+        lock.lock()
+        remoteSnapshot = snapshot
+        lock.unlock()
+        publishTargetChange(
+            id: snapshot.id,
+            name: device.name,
+            systemImage: device.systemImage,
+            needsLocalTunnel: false
+        )
     }
 
     func selectThisDevice() {
@@ -80,7 +116,7 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
         publishTargetChange(id: "local", name: nil, systemImage: nil)
     }
 
-    private func publishTargetChange(id: String, name: String?, systemImage: String?) {
+    private func publishTargetChange(id: String, name: String?, systemImage: String?, needsLocalTunnel: Bool = true) {
         let update = {
             self.selectedTargetID = id
             self.remoteDeviceName = name
@@ -89,7 +125,7 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
             markTunnelDisconnected()
             MountingProgress.shared.resetForTargetChange()
             NotificationCenter.default.post(name: .deviceTargetChanged, object: nil)
-            startTunnelInBackground(showErrorUI: false)
+            if needsLocalTunnel { startTunnelInBackground(showErrorUI: false) }
         }
         if Thread.isMainThread {
             update()
@@ -99,6 +135,13 @@ final class DeviceTargetManager: ObservableObject, @unchecked Sendable {
     }
 
     private func clearLocationBeforeTargetChange() {
+        let current = snapshot()
+        if let relay = current.stikServer {
+            Task { @MainActor in
+                StikServerConnection.shared.command("clearLocation", deviceID: relay.deviceID)
+            }
+            return
+        }
         LocationSimulationCommandQueue.shared.sync {
             _ = clear_simulated_location()
         }

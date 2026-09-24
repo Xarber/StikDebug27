@@ -101,14 +101,23 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
             serviceIdentifier: serviceIdentifier,
             authenticationTags: txt.authenticationTags
         )
+        let advertisedName = txt.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hostName = sender.hostName?
+            .replacingOccurrences(of: ".local.", with: "")
+            .replacingOccurrences(of: ".local", with: "")
+            .replacingOccurrences(of: "-", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let device = NearbyDevelopmentDevice(
             discoveryID: discoveryID,
-            name: pairingMatch?.record.displayName ?? "Unpaired Device",
+            name: pairingMatch?.record.displayName
+                ?? (advertisedName?.isEmpty == false ? advertisedName : nil)
+                ?? (hostName?.isEmpty == false ? hostName : nil)
+                ?? sender.name,
             type: sender.type,
             domain: sender.domain,
             serviceIdentifier: serviceIdentifier,
             deviceIdentifier: pairingMatch?.record.deviceIdentifier,
-            modelIdentifier: pairingMatch?.record.modelIdentifier,
+            modelIdentifier: pairingMatch?.record.modelIdentifier ?? txt.model,
             addresses: addresses,
             pairingRecordID: pairingMatch?.record.id,
             pairingFileURL: pairingMatch?.pairingFileURL
@@ -148,12 +157,14 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
         }
     }
 
-    private static func remotePairingTXT(from data: Data?) -> (identifier: String?, authenticationTags: [String]) {
-        guard let data else { return (nil, []) }
+    private static func remotePairingTXT(from data: Data?) -> (identifier: String?, authenticationTags: [String], name: String?, model: String?) {
+        guard let data else { return (nil, [], nil, nil) }
         let bytes = [UInt8](data)
         var index = 0
         var identifier: String?
         var tags: [String] = []
+        var name: String?
+        var model: String?
         while index < bytes.count {
             let length = Int(bytes[index])
             index += 1
@@ -166,8 +177,10 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
             let value = String(text[text.index(after: separator)...])
             if key == "identifier" { identifier = value }
             if key == "authTag" { tags.append(value) }
+            if key == "name" || key == "deviceName" { name = value }
+            if key == "model" || key == "modelIdentifier" { model = value }
         }
-        return (identifier, tags)
+        return (identifier, tags, name, model)
     }
 }
 

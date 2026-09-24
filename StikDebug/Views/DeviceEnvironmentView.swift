@@ -206,6 +206,24 @@ struct DeviceEnvironmentView: View {
         guard !isLoading else { return }
         isLoading = true
         appearance = nil
+        if let relay = DeviceConnectionContext.current.stikServer {
+            Task { @MainActor in
+                do {
+                    let configuration = try await StikServerConnection.shared.request(
+                        "configuration", deviceID: relay.deviceID, expecting: "configuration"
+                    )
+                    let conditions = try await StikServerConnection.shared.request(
+                        "conditions", deviceID: relay.deviceID, expecting: "conditions"
+                    )
+                    applyRelayConfiguration(configuration)
+                    groups = relayConditionGroups(conditions)
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+                isLoading = false
+            }
+            return
+        }
         Task.detached {
             do {
                 let configuration = try JITEnableContext.shared.currentDeviceConfiguration()
@@ -235,6 +253,9 @@ struct DeviceEnvironmentView: View {
         let previous = appearance
         appearance = style
         pendingAction = "appearance"
+        if performRelaySetting("setAppearance", fields: ["style": style == .dark ? "dark" : "light"], onFailure: {
+            appearance = previous
+        }) { return }
         Task.detached {
             do {
                 try JITEnableContext.shared.setDeviceAppearance(style)
@@ -251,12 +272,14 @@ struct DeviceEnvironmentView: View {
 
     private func applyLiquidGlassOpacity() {
         let value = liquidGlassOpacity
+        if performRelaySetting("setLiquidGlassOpacity", fields: ["value": value]) { return }
         performSetting("glass") {
             try JITEnableContext.shared.setLiquidGlassOpacity(value)
         }
     }
 
     private func applyTextSize(_ value: String, previous: String) {
+        if performRelaySetting("setTextSize", fields: ["size": value], onFailure: { textSize = previous }) { return }
         performSetting("textSize", onFailure: { textSize = previous }) {
             try JITEnableContext.shared.setDeviceTextSize(value)
         }
@@ -267,12 +290,18 @@ struct DeviceEnvironmentView: View {
         colorFilterEnabled = enabled
         let type = colorFilterType
         let intensity = colorFilterIntensity
+        if performRelaySetting(
+            "setColorFilter",
+            fields: ["enabled": enabled, "filterType": enabled ? type : NSNull(), "value": intensity],
+            onFailure: { colorFilterEnabled = previous }
+        ) { return }
         performSetting("colorFilter", onFailure: { colorFilterEnabled = previous }) {
             try JITEnableContext.shared.setDeviceColorFilter(enabled: enabled, type: type, intensity: intensity)
         }
     }
 
     private func setIncreaseContrast(_ enabled: Bool) {
+        if performRelaySetting("setIncreaseContrast", fields: ["enabled": enabled]) { return }
         performSetting("contrast") {
             try JITEnableContext.shared.setIncreaseContrast(enabled)
         }
@@ -290,6 +319,20 @@ struct DeviceEnvironmentView: View {
         case "borders": showLayoutBorders = value
         default: break
         }
+        let relayCommand: String = switch key {
+        case "reduceMotion": "setReduceMotion"
+        case "reduceTransparency": "setReduceTransparency"
+        case "borders": "setShowBorders"
+        default: ""
+        }
+        if !relayCommand.isEmpty, performRelaySetting(relayCommand, fields: ["enabled": value], onFailure: {
+            switch key {
+            case "reduceMotion": reduceMotion = current
+            case "reduceTransparency": reduceTransparency = current
+            case "borders": showLayoutBorders = current
+            default: break
+            }
+        }) { return }
         performSetting(key, onFailure: {
             switch key {
             case "reduceMotion": reduceMotion = current
@@ -324,6 +367,12 @@ struct DeviceEnvironmentView: View {
 
     private func enable(_ profile: DeviceConditionProfile) {
         pendingAction = profile.id
+        if performRelaySetting(
+            "enableCondition",
+            fields: ["groupIdentifier": profile.groupIdentifier, "profileIdentifier": profile.identifier],
+            actionKey: profile.id,
+            onSuccess: { activeProfileID = profile.id }
+        ) { return }
         Task.detached {
             do {
                 try JITEnableContext.shared.enableDeviceCondition(profile)
@@ -342,6 +391,7 @@ struct DeviceEnvironmentView: View {
 
     private func disableCondition() {
         pendingAction = "disable"
+        if performRelaySetting("disableCondition", actionKey: "disable", onSuccess: { activeProfileID = nil }) { return }
         Task.detached {
             do {
                 try JITEnableContext.shared.disableDeviceCondition()
@@ -355,6 +405,68 @@ struct DeviceEnvironmentView: View {
                     errorMessage = error.localizedDescription
                 }
             }
+        }
+    }
+
+    private func performRelaySetting(
+        _ command: String,
+        fields: [String: Any] = [:],
+        actionKey: String? = nil,
+        onSuccess: @escaping @MainActor () -> Void = {},
+        onFailure: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
+        guard let relay = DeviceConnectionContext.current.stikServer else { return false }
+        pendingAction = actionKey ?? command
+        Task { @MainActor in
+            do {
+                let result = try await StikServerConnection.shared.request(
+                    command,
+                    deviceID: relay.deviceID,
+                    fields: fields,
+                    expecting: "commandResult"
+                )
+                guard result["ok"] as? Bool == true else {
+                    throw NSError(
+                        domain: "StikServer",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: result["message"] as? String ?? "The device rejected the setting."]
+                    )
+                }
+                onSuccess()
+            } catch {
+                onFailure()
+                errorMessage = error.localizedDescription
+            }
+            pendingAction = nil
+        }
+        return true
+    }
+
+    private func applyRelayConfiguration(_ value: [String: Any]) {
+        if let style = value["appearance"] as? String { appearance = style == "dark" ? .dark : .light }
+        if let value = value["textSize"] as? String { textSize = value }
+        if let filter = value["colorFilter"] as? [String: Any] {
+            colorFilterEnabled = filter["enabled"] as? Bool ?? false
+            if let value = filter["type"] as? String { colorFilterType = value }
+            if let value = filter["intensity"] as? NSNumber { colorFilterIntensity = value.doubleValue }
+        }
+        if let value = value["reduceMotion"] as? Bool { reduceMotion = value }
+        if let value = value["reduceTransparency"] as? Bool { reduceTransparency = value }
+        if let value = value["showBorders"] as? Bool { showLayoutBorders = value }
+    }
+
+    private func relayConditionGroups(_ value: [String: Any]) -> [DeviceConditionGroup] {
+        (value["groups"] as? [[String: Any]] ?? []).compactMap { group in
+            guard let identifier = group["identifier"] as? String else { return nil }
+            let profiles = (group["profiles"] as? [[String: Any]] ?? []).compactMap { profile -> DeviceConditionProfile? in
+                guard let profileID = profile["identifier"] as? String else { return nil }
+                return DeviceConditionProfile(
+                    groupIdentifier: identifier,
+                    identifier: profileID,
+                    detail: profile["description"] as? String ?? profileID
+                )
+            }
+            return DeviceConditionGroup(identifier: identifier, profiles: profiles)
         }
     }
 }

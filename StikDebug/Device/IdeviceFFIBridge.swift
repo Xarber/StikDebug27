@@ -758,6 +758,16 @@ enum LocationSimulationCommandQueue {
 
 func simulate_location(_ deviceIP: String, _ latitude: Double, _ longitude: Double, _ pairingFile: String) -> Int32 {
     let target = DeviceConnectionContext.current
+    if let relay = target.stikServer {
+        Task { @MainActor in
+            StikServerConnection.shared.command(
+                "setLocation",
+                deviceID: relay.deviceID,
+                fields: ["latitude": latitude, "longitude": longitude]
+            )
+        }
+        return LocationSimulationStatus.ok
+    }
     if LocationSimulationState.targetID != target.id {
         LocationSimulationState.cleanup()
     }
@@ -857,6 +867,12 @@ func simulate_location(_ deviceIP: String, _ latitude: Double, _ longitude: Doub
 }
 
 func clear_simulated_location() -> Int32 {
+    if let relay = DeviceConnectionContext.current.stikServer {
+        Task { @MainActor in
+            StikServerConnection.shared.command("clearLocation", deviceID: relay.deviceID)
+        }
+        return LocationSimulationStatus.ok
+    }
     guard let locationSimulation = LocationSimulationState.locationSimulation else {
         return LocationSimulationStatus.locationClear
     }

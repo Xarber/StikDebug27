@@ -27,6 +27,10 @@ final class DeviceInfoManager: ObservableObject {
     private var lockdownHandle: LockdownClientSendable? = nil
 
     func initAndLoad() {
+        if let relay = DeviceConnectionContext.current.stikServer {
+            loadRelayInfo(relay)
+            return
+        }
         guard !initialized else { loadInfo(); return }
         busy = true
         Task.detached {
@@ -54,6 +58,27 @@ final class DeviceInfoManager: ObservableObject {
                 }
             }
 
+        }
+    }
+
+    private func loadRelayInfo(_ relay: StikServerDeviceTarget) {
+        guard !busy else { return }
+        busy = true
+        Task { @MainActor in
+            do {
+                let event = try await StikServerConnection.shared.request(
+                    "deviceInfo",
+                    deviceID: relay.deviceID,
+                    expecting: "deviceInfo"
+                )
+                entries = Self.flatten(event)
+                    .filter { $0.key != "type" }
+                    .sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+                initialized = true
+            } catch {
+                self.error = ("Fetch Error", error.localizedDescription)
+            }
+            busy = false
         }
     }
 
@@ -115,6 +140,14 @@ final class DeviceInfoManager: ObservableObject {
         case let s as String: return s
         case let n as NSNumber: return n.stringValue
         default: return String(describing: raw)
+        }
+    }
+
+    nonisolated private static func flatten(_ dictionary: [String: Any], prefix: String = "") -> [(key: String, value: String)] {
+        dictionary.flatMap { key, value -> [(key: String, value: String)] in
+            let fullKey = prefix.isEmpty ? key : "\(prefix).\(key)"
+            if let child = value as? [String: Any] { return flatten(child, prefix: fullKey) }
+            return [(fullKey, convertToString(value))]
         }
     }
 
