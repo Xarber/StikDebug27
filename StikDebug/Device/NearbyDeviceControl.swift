@@ -220,13 +220,27 @@ enum RemoteScreenOrientation: UInt8 {
 }
 
 final class RemoteVideoFrameStore: ObservableObject {
-    @Published fileprivate(set) var image: UIImage?
+    @Published var image: UIImage?
 }
 
 enum RemoteTouchPhase: UInt8 {
     case down
     case move
     case up
+}
+
+@MainActor
+protocol RemoteControlModel: ObservableObject {
+    var video: RemoteVideoFrameStore { get }
+    var orientation: RemoteScreenOrientation { get }
+    var isSoftwareKeyboardVisible: Bool { get }
+
+    func press(_ button: RemoteHardwareButton)
+    func touch(_ phase: RemoteTouchPhase, x: UInt16, y: UInt16)
+    func type(_ text: String)
+    func backspace()
+    func toggleSoftwareKeyboard()
+    func rotate(_ direction: RemoteRotationDirection)
 }
 
 final class RemoteDeviceSession: @unchecked Sendable {
@@ -563,7 +577,7 @@ final class RemoteDeviceSession: @unchecked Sendable {
     }
 }
 
-final class NearbyRemoteControlModel: ObservableObject, @unchecked Sendable {
+final class NearbyRemoteControlModel: RemoteControlModel, @unchecked Sendable {
     let video = RemoteVideoFrameStore()
     @Published private(set) var connectedDeviceName: String?
     @Published private(set) var orientation: RemoteScreenOrientation = .portrait

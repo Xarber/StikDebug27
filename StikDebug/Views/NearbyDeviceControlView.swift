@@ -117,8 +117,8 @@ struct NearbyDeviceControlView: View {
                 } label: {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Open StikServer Devices")
-                            Text("View and control devices connected to your desktop server")
+                            Text("Connect to StikServer")
+                            Text("Use StikDebug's native controls through your desktop server")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -128,7 +128,7 @@ struct NearbyDeviceControlView: View {
                 }
                 .disabled(serverAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                Text("In the StikServer desktop app, use Copy Remote Access Link and paste it above. StikDebug connects as a viewer; it does not relay this device to the server.")
+                Text("In the StikServer desktop app, use Copy Remote Access Link and paste it above. StikDebug connects directly to the server API; it does not load the server website or relay this device.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -553,8 +553,8 @@ private struct RemotePairingView: View {
     }
 }
 
-private struct RemoteHardwareControls: View {
-    @ObservedObject var controller: NearbyRemoteControlModel
+struct RemoteHardwareControls<Controller: RemoteControlModel>: View {
+    @ObservedObject var controller: Controller
 
     var body: some View {
         HStack(spacing: 10) {
@@ -594,8 +594,8 @@ private struct RemoteHardwareControls: View {
     }
 }
 
-private struct RemoteFullscreenView: View {
-    @ObservedObject var controller: NearbyRemoteControlModel
+struct RemoteFullscreenView<Controller: RemoteControlModel>: View {
+    @ObservedObject var controller: Controller
     @Binding var isPresented: Bool
     let saveScreenshot: () -> Void
     let stopMirroring: () -> Void
@@ -718,16 +718,16 @@ private struct RemoteFullscreenView: View {
     }
 }
 
-private enum RemoteScreenGesture {
+enum RemoteScreenGesture {
     case touch(RemoteTouchPhase, RemoteNormalizedPoint)
 }
 
-private struct RemoteNormalizedPoint {
+struct RemoteNormalizedPoint {
     let x: UInt16
     let y: UInt16
 }
 
-private struct RemoteScreenSurface: View {
+struct RemoteScreenSurface: View {
     @ObservedObject var video: RemoteVideoFrameStore
     let orientation: RemoteScreenOrientation
     let action: (RemoteScreenGesture) -> Void
@@ -819,9 +819,9 @@ private struct RemoteScreenSurface: View {
     }
 }
 
-private struct RemoteKeyboardCapture: UIViewRepresentable {
+struct RemoteKeyboardCapture<Controller: RemoteControlModel>: UIViewRepresentable {
     @Binding var isActive: Bool
-    let controller: NearbyRemoteControlModel
+    let controller: Controller
 
     func makeCoordinator() -> Coordinator { Coordinator(controller: controller) }
 
@@ -848,9 +848,9 @@ private struct RemoteKeyboardCapture: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, UITextFieldDelegate {
-        var controller: NearbyRemoteControlModel
+        var controller: Controller
 
-        init(controller: NearbyRemoteControlModel) {
+        init(controller: Controller) {
             self.controller = controller
         }
 
@@ -875,7 +875,7 @@ private struct RemoteKeyboardCapture: UIViewRepresentable {
     }
 }
 
-private enum RemotePhotoSaver {
+enum RemotePhotoSaver {
     static func save(
         _ image: UIImage,
         orientation: RemoteScreenOrientation,
