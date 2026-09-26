@@ -30,7 +30,7 @@ enum BatteryAnalyticsService {
     ) throws -> [BatteryHealthSample] {
         let existing = try storedSamples(for: target.id)
         let importedNames = Set(existing.map(\.sourceName))
-        let candidates = try context.crashReports()
+        let candidates = try context.batteryAnalyticsReports()
             .filter { entry in
                 let name = entry.name.lowercased()
                 return (name.contains("analytics-") || name.contains("log-aggregated-"))

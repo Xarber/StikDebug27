@@ -154,6 +154,30 @@ final class DeviceNotificationStream {
 }
 
 extension IdeviceBridge {
+    static func crashReportDirectoryEntries(_ client: OpaquePointer, path: String?) throws -> [String] {
+        var entries: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+        var count = 0
+        let ffiError = if let path {
+            crash_report_client_ls(client, path, &entries, &count)
+        } else {
+            crash_report_client_ls(client, nil, &entries, &count)
+        }
+        if let ffiError {
+            throw consumeFFIError(ffiError, fallback: "Failed to list crash reports")
+        }
+        defer { if let entries { freeDirectoryEntries(entries, count: count) } }
+        guard let entries else { return [] }
+        return (0..<count).compactMap { index in
+            entries[index].flatMap { String(validatingUTF8: $0) }
+        }
+    }
+
+    static func looksLikeCrashReportFile(_ name: String) -> Bool {
+        let lowercased = name.lowercased()
+        return [".ips", ".crash", ".panic", ".log", ".txt", ".synced", ".plist"]
+            .contains { lowercased.contains($0) }
+    }
+
     static func diagnosticDictionary(from plist: plist_t?) throws -> [String: Any] {
         guard let plist else { return [:] }
         var binary: UnsafeMutablePointer<CChar>?
@@ -335,6 +359,51 @@ extension JITEnableContext {
                     guard let value = entries[index].flatMap({ String(validatingUTF8: $0) }), value != ".", value != ".." else { return nil }
                     return CrashReportEntry(path: value, name: value)
                 }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
+            }
+        }
+    }
+
+    /// Returns the device's own Analytics reports, including reports that iOS
+    /// has moved into nested folders such as `Retired`. Proxied-device folders
+    /// are deliberately skipped so an attached Watch or another paired device
+    /// cannot contaminate this device's battery history.
+    func batteryAnalyticsReports() throws -> [CrashReportEntry] {
+        try IdeviceBridge.withTunnelHandles(for: self) { adapter, handshake in
+            try IdeviceBridge.withConnectedClient(
+                fallback: "Failed to connect to crash-report service",
+                missingClientMessage: "Crash-report client was not created",
+                connect: { crash_report_client_connect_rsd(adapter, handshake, $0) },
+                cleanup: { crash_report_client_free($0) }
+            ) { client in
+                var pending: [(path: String?, depth: Int)] = [(nil, 0)]
+                var reports: [CrashReportEntry] = []
+
+                while !pending.isEmpty {
+                    let directory = pending.removeFirst()
+                    let names: [String]
+                    do {
+                        names = try IdeviceBridge.crashReportDirectoryEntries(client, path: directory.path)
+                    } catch {
+                        if directory.path == nil { throw error }
+                        continue
+                    }
+
+                    for name in names where name != "." && name != ".." {
+                        let path = directory.path.map { "\($0)/\(name)" } ?? name
+                        let lowercasedName = name.lowercased()
+                        if lowercasedName.contains("analytics-") || lowercasedName.contains("log-aggregated-") {
+                            reports.append(CrashReportEntry(path: path, name: name))
+                            continue
+                        }
+
+                        guard directory.depth < 3,
+                              !lowercasedName.hasPrefix("proxieddevice-"),
+                              !IdeviceBridge.looksLikeCrashReportFile(name) else { continue }
+                        pending.append((path, directory.depth + 1))
+                    }
+                }
+
+                return reports.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
             }
         }
     }
