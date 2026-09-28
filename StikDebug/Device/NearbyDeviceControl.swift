@@ -109,9 +109,9 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let device = NearbyDevelopmentDevice(
             discoveryID: discoveryID,
-            name: pairingMatch?.record.displayName
-                ?? (advertisedName?.isEmpty == false ? advertisedName : nil)
+            name: (advertisedName?.isEmpty == false ? advertisedName : nil)
                 ?? (hostName?.isEmpty == false ? hostName : nil)
+                ?? pairingMatch?.record.displayName
                 ?? sender.name,
             type: sender.type,
             domain: sender.domain,
@@ -134,7 +134,28 @@ final class NearbyDeviceBrowser: NSObject, ObservableObject, NetServiceBrowserDe
     }
 
     private func publishResolvedDevices() {
-        devices = Dictionary(grouping: resolvedDevices.values, by: \.id).values.compactMap { matches in
+        var groups: [[NearbyDevelopmentDevice]] = []
+        for device in resolvedDevices.values.sorted(by: { $0.discoveryID < $1.discoveryID }) {
+            let normalizedName = device.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                .filter { $0.isLetter || $0.isNumber }
+            if let index = groups.firstIndex(where: { group in
+                group.contains { existing in
+                    if existing.id == device.id || existing.serviceIdentifier == device.serviceIdentifier { return true }
+                    if let identifier = existing.deviceIdentifier, identifier == device.deviceIdentifier { return true }
+                    let existingName = existing.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                        .filter { $0.isLetter || $0.isNumber }
+                    return !normalizedName.isEmpty && normalizedName == existingName &&
+                        (existing.modelIdentifier == device.modelIdentifier || existing.kind == device.kind)
+                }
+            }) {
+                groups[index].append(device)
+            } else { groups.append([device]) }
+        }
+        devices = groups.compactMap { matches in
+            let matches = matches.sorted {
+                if $0.isPaired != $1.isPaired { return $0.isPaired }
+                return $0.discoveryID < $1.discoveryID
+            }
             guard let first = matches.first else { return nil }
             let addresses = matches.flatMap(\.addresses).reduce(into: [Data]()) { result, address in
                 if !result.contains(address) { result.append(address) }

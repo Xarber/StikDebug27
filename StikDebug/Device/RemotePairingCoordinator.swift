@@ -177,11 +177,10 @@ enum RemotePairingStore {
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
 
         var records = try loadRecords(in: directory)
-        let sourceName = sourceURL.deletingPathExtension().lastPathComponent
         records.append(
             RemotePairingRecord(
                 id: identifier,
-                displayName: sourceName.isEmpty ? "Imported Device" : sourceName,
+                displayName: "Imported Device",
                 deviceIdentifier: nil,
                 modelIdentifier: nil,
                 serviceIdentifier: nil,
