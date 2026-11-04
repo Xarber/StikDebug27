@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import plistlib
+import re
 import urllib.error
 import urllib.request
 from copy import deepcopy
@@ -123,7 +124,8 @@ def is_current_architecture(source):
         app = app_from(source)
     except RuntimeError:
         return False
-    return all(track in channel_map(app) for track in CHANNELS)
+    # Published Classic-compatible sources intentionally omit releaseChannels.
+    return isinstance(app.get("versions"), list)
 
 
 def clean_source_from_base(base, persistent):
@@ -142,16 +144,42 @@ def clean_source_from_base(base, persistent):
 
     previous = app_from(persistent)
     previous_versions = previous.get("versions", [])
-    if previous_versions and isinstance(previous_versions[0], dict):
-        app["versions"] = [deepcopy(previous_versions[0])]
+    app["versions"] = [deepcopy(entry) for entry in previous_versions if isinstance(entry, dict)]
 
     previous_channels = channel_map(previous)
     current_channels = channel_map(app)
     for track in CHANNELS:
-        releases = previous_channels[track].get("releases", [])
+        releases = previous_channels.get(track, {}).get("releases", [])
         if releases and isinstance(releases[0], dict):
             current_channels[track]["releases"] = [deepcopy(releases[0])]
     return source
+
+
+def recover_stable_versions():
+    """Recover real IPA metadata when an older updater erased published history."""
+    versions = []
+    for page in range(1, 11):
+        releases = github_api_get(f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=100&page={page}")
+        for release in releases:
+            tag = release.get("tag_name", "")
+            if release.get("draft") or release.get("prerelease") or tag == STATE_RELEASE_TAG:
+                continue
+            if not re.fullmatch(r"v?\d+\.\d+\.\d+(?:\.\d+)?", tag):
+                continue
+            try:
+                url, size = release_asset(release, IPA_ASSET)
+            except RuntimeError:
+                continue
+            date = release.get("published_at") or release.get("created_at")
+            if not date:
+                continue
+            # Build numbers are not inferred from tags or release dates.
+            versions.append({"version": tag.removeprefix("v"), "date": date,
+                             "localizedDescription": release.get("body") or "",
+                             "downloadURL": url, "size": size})
+        if len(releases) < 100:
+            break
+    return versions
 
 
 def release_asset(release, filename):
@@ -215,11 +243,13 @@ def update_source():
         entry["headline"] = COMMIT_MESSAGE
 
     app = app_from(source)
+    if not app["versions"]:
+        app["versions"] = recover_stable_versions()
     channels = channel_map(app)
     if IS_NIGHTLY:
         channels["nightly"]["releases"] = [entry]
     else:
-        app["versions"] = [entry]
+        app["versions"] = [entry] + [old for old in app["versions"] if old.get("version") != version]
         channels["stable"]["releases"] = [entry]
 
     #! DELETE THIS TO RESTORE RELEASECHANNELS
