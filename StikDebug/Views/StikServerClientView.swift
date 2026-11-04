@@ -19,7 +19,11 @@ struct StikServerDevice: Identifiable, Equatable, Decodable {
     let backendMessage: String?
 
     var displayedIdentifier: String { serviceIdentifier ?? pairingIdentifier ?? id }
-    var systemImage: String { kind.localizedCaseInsensitiveContains("ipad") ? "ipad" : "iphone" }
+    var systemImage: String {
+        if kind.localizedCaseInsensitiveContains("ipad") { return "ipad" }
+        if ["Mac", "Windows", "Linux"].contains(kind) { return "desktopcomputer" }
+        return "iphone"
+    }
 }
 
 @MainActor
