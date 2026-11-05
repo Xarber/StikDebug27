@@ -12,6 +12,8 @@ struct NearbyDeviceControlView: View {
     @ObservedObject private var browser = NearbyDeviceBrowser.shared
     @ObservedObject private var deviceTarget = DeviceTargetManager.shared
     @ObservedObject private var stikServer = StikServerConnection.shared
+    @ObservedObject private var serverBrowser = StikServerBrowser.shared
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var pairing = RemotePairingCoordinator()
     @State private var isShowingPairing = false
     @State private var isImportingPairingFile = false
@@ -25,14 +27,18 @@ struct NearbyDeviceControlView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { browser.refresh() } label: { Image(systemName: "arrow.clockwise") }
+                Button { browser.refresh(); serverBrowser.refresh() } label: { Image(systemName: "arrow.clockwise") }
             }
         }
         .onAppear {
             browser.start()
+            serverBrowser.start()
             if !serverAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 stikServer.connect(serverAddress: serverAddress, token: serverToken)
             }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { serverBrowser.refresh() }
         }
         .sheet(isPresented: $isShowingPairing, onDismiss: {
             pairing.cancel()
@@ -108,6 +114,15 @@ struct NearbyDeviceControlView: View {
             }
 
             Section("StikServer") {
+                ForEach(serverBrowser.servers) { server in
+                    Button {
+                        // A discovered address does not establish trust or authorize sharing a saved token.
+                        serverAddress = server.address
+                        serverToken = ""
+                    } label: {
+                        Label(server.name, systemImage: "desktopcomputer")
+                    }
+                }
                 TextField("Server address or copied access link", text: $serverAddress)
                     .textContentType(.URL)
                     .textInputAutocapitalization(.never)
@@ -137,6 +152,27 @@ struct NearbyDeviceControlView: View {
                 Text("In the StikServer desktop app, use Copy Remote Access Link and paste it above. StikDebug connects directly to the server API; it does not load the server website or relay this device.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let message = serverBrowser.discoveryMessage {
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            if !stikServer.devices.isEmpty {
+                Section("StikServer Devices") {
+                    ForEach(stikServer.devices) { device in
+                        NavigationLink {
+                            StikServerDeviceDetailView(connection: stikServer, device: device)
+                        } label: {
+                            Label {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(device.name)
+                                    Text("\(device.kind) · \(device.controllable ? "Ready" : "Unavailable")").font(.caption).foregroundStyle(.secondary)
+                                }
+                            } icon: { Image(systemName: device.systemImage) }
+                        }
+                        .disabled(!device.controllable)
+                    }
+                }
             }
 
             Section("Nearby Devices") {

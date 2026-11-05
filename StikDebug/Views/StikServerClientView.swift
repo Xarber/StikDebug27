@@ -113,7 +113,7 @@ final class StikServerConnection: ObservableObject {
             do {
                 while !Task.isCancelled {
                     let message = try await socket.receive()
-                    guard let self else { return }
+                    guard let self, self.socket === socket else { return }
                     self.receive(message)
                 }
             } catch is CancellationError {
@@ -239,7 +239,10 @@ final class StikServerConnection: ObservableObject {
             case "devices":
                 guard let rawDevices = object["devices"],
                       let encoded = try? JSONSerialization.data(withJSONObject: rawDevices),
-                      let decoded = try? JSONDecoder().decode([StikServerDevice].self, from: encoded) else { return }
+                      let decoded = try? JSONDecoder().decode([StikServerDevice].self, from: encoded) else {
+                    state = .failed("StikServer returned an invalid device list. Update StikServer and reconnect.")
+                    return
+                }
                 devices = decoded.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             case "subscribed":
                 let deviceID = object["deviceId"] as? String
@@ -577,7 +580,7 @@ struct StikServerClientView: View {
     }
 }
 
-private struct StikServerDeviceDetailView: View {
+struct StikServerDeviceDetailView: View {
     let device: StikServerDevice
     @ObservedObject private var connection: StikServerConnection
     @StateObject private var controller: StikServerRemoteControlModel

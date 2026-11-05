@@ -78,6 +78,7 @@ struct MainTabView: View {
             }
             .onAppear {
                 nearbyDevices.start()
+                StikServerBrowser.shared.start()
                 connectToSavedStikServer()
                 ensureSelectionIsValid()
                 if !didSetInitialHome {
@@ -87,6 +88,7 @@ struct MainTabView: View {
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
+                    StikServerBrowser.shared.refresh()
                     connectToSavedStikServer()
                 } else if phase == .background {
                     StikServerRelayManager.shared.stop()
