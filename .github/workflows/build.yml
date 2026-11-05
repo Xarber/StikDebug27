@@ -167,7 +167,7 @@ jobs:
           NIGHTLY_INPUT: ${{ inputs.release__nightly }}
         run: |
           if [ "$EVENT_NAME" != "workflow_dispatch" ] || [ "$NIGHTLY_INPUT" != "false" ]; then
-            echo "tag=nightly" >> "$GITHUB_OUTPUT"
+            echo "tag=nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
             echo "name=Nightly" >> "$GITHUB_OUTPUT"
             echo "nightly=true" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
@@ -178,17 +178,30 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Generate Conventional Commit release notes
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          base=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '[.[] | select(.draft == false and .prerelease == false and .tag_name != "1.0")][0].tag_name // empty')
+          python3 .github/scripts/release_notes.py --repository "$GITHUB_REPOSITORY" --base "$base"
+          printf '\nSource commit: [%s](https://github.com/%s/commit/%s)\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> RELEASE_NOTES.md
+          shasum -a 256 "$scheme.ipa" > SHA256SUMS
+
       - name: Create or update GitHub Release
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.release.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: ${{ steps.release.outputs.name }}
           draft: false
           prerelease: ${{ steps.release.outputs.prerelease }}
           overwrite_files: true
+          body_path: RELEASE_NOTES.md
           files: |
             ${{ env.scheme }}.ipa
+            SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -210,6 +223,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: "1.0"
+          make_latest: false
           name: "1.0"
           draft: false
           prerelease: false
