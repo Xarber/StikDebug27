@@ -9,12 +9,13 @@ import idevice
 final class MountingProgress: ObservableObject {
     static let shared = MountingProgress()
 
-    @Published private(set) var mountProgress: Double = 0.0
     @Published private(set) var mountingThread: Thread?
     @Published private(set) var coolisMounted: Bool = false
 
     private let mountCheckLock = NSLock()
     private var mountCheckInProgress = false
+    private let mountLock = NSLock()
+    private var mountInProgress = false
 
     private init() {}
 
@@ -35,75 +36,86 @@ final class MountingProgress: ObservableObject {
         mountCheckLock.unlock()
 
         DispatchQueue.global(qos: .utility).async {
-            let mounted = isMounted()
+            let status = checkMountStatus()
 
             self.mountCheckLock.lock()
             self.mountCheckInProgress = false
             self.mountCheckLock.unlock()
 
             DispatchQueue.main.async {
-                self.coolisMounted = mounted
+                if status != .unreachable {
+                    self.coolisMounted = status == .mounted
+                }
             }
-        }
-    }
-
-    func progressCallback(progress: size_t, total: size_t, context: UnsafeMutableRawPointer?) {
-        let percentage = Double(progress) / Double(total) * 100.0
-        DispatchQueue.main.async {
-            self.mountProgress = percentage
         }
     }
 
     func pubMount() {
-        guard TunnelManager.shared.isConnected else { return }
+        guard TunnelManager.shared.isConnected, DeveloperDiskImageService.filesAreReady else { return }
 
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        mountLock.lock()
+        guard !mountInProgress else {
+            mountLock.unlock()
+            return
+        }
+        mountInProgress = true
+        mountLock.unlock()
+
+        let thread = Thread { [weak self] in
             self?.mount()
         }
+        thread.qualityOfService = .background
+        thread.name = "mounting"
+        DispatchQueue.main.async {
+            self.mountingThread = thread
+        }
+        thread.start()
     }
 
     private func mount() {
-        let currentlyMounted = isMounted()
-        DispatchQueue.main.async {
-            self.coolisMounted = currentlyMounted
+        switch checkMountStatus() {
+        case .mounted:
+            finishMount {
+                self.coolisMounted = true
+            }
+            return
+        case .unreachable:
+            finishMount()
+            return
+        case .notMounted:
+            break
         }
 
-        guard isPairing(), !currentlyMounted else {
+        guard isPairing() else {
+            finishMount()
             return
         }
 
-        if let mountingThread {
-            mountingThread.cancel()
-            self.mountingThread = nil
-        }
-
-        let thread = Thread { [weak self] in
-            guard let self else { return }
-            let mountError = mountPersonalDDI(
-                imagePath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg").path,
-                trustcachePath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg.trustcache").path,
-                manifestPath: URL.documentsDirectory.appendingPathComponent("DDI/BuildManifest.plist").path
-            )
-
-            DispatchQueue.main.async {
-                if let mountError {
-                    showAlert(title: "DDI Mount Failed", message: mountError, showOk: true, showTryAgain: true) { shouldTryAgain in
-                        if shouldTryAgain {
-                            self.pubMount()
-                        }
+        let mountError = mountDeveloperDiskImage(from: DeveloperDiskImageService.directoryURL.path)
+        let mounted = mountError == nil || checkMountStatus() == .mounted
+        finishMount {
+            if mounted {
+                self.coolisMounted = true
+                self.checkforMounted()
+            } else if let mountError {
+                LogManager.shared.addErrorLog("Failed to mount DDI: \(mountError)")
+                showAlert(title: "DDI Mount Failed", message: mountError, showOk: true, showTryAgain: true) { shouldTryAgain in
+                    if shouldTryAgain {
+                        self.pubMount()
                     }
-                } else {
-                    self.coolisMounted = true
-                    self.checkforMounted()
                 }
-                self.mountingThread = nil
             }
         }
+    }
 
-        thread.qualityOfService = .background
-        thread.name = "mounting"
-        thread.start()
-        mountingThread = thread
+    private func finishMount(_ completion: @escaping () -> Void = {}) {
+        DispatchQueue.main.async {
+            self.mountingThread = nil
+            self.mountLock.lock()
+            self.mountInProgress = false
+            self.mountLock.unlock()
+            completion()
+        }
     }
 }
 

@@ -11,7 +11,6 @@ final class BackgroundAudioManager {
     private var engine = AVAudioEngine()
     private var player = AVAudioPlayerNode()
     private var isRunning = false
-    private var persistentEnabled = false
     private var activityCount = 0
     private var healthCheckTimer: Timer?
 
@@ -30,13 +29,7 @@ final class BackgroundAudioManager {
         )
     }
 
-    func start() {
-        persistentEnabled = true
-        refreshRunningState()
-    }
-
-    func stop() {
-        persistentEnabled = false
+    func configurationDidChange() {
         refreshRunningState()
     }
 
@@ -51,7 +44,7 @@ final class BackgroundAudioManager {
     }
 
     private func refreshRunningState() {
-        let shouldRun = persistentEnabled || (activityCount > 0 && UserDefaults.standard.bool(forKey: "keepAliveAudio"))
+        let shouldRun = activityCount > 0 && UserDefaults.standard.bool(forKey: "keepAliveAudio")
         guard shouldRun != isRunning else {
             if shouldRun {
                 recoverIfNeeded()

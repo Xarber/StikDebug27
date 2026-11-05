@@ -278,7 +278,7 @@ struct ConsoleLogsView: View {
 
     @ViewBuilder
     private var exportMenuOption: some View {
-        let logURL: URL = URL.documentsDirectory.appendingPathComponent("idevice_log.txt")
+        let logURL = IdeviceLogFileManager.logURL
         if FileManager.default.fileExists(atPath: logURL.path) {
             ShareLink(
                 item: logURL,
@@ -321,7 +321,7 @@ struct ConsoleLogsView: View {
         guard !isLoadingLogs else { return }
         isLoadingLogs = true
 
-        let logPath = URL.documentsDirectory.appendingPathComponent("idevice_log.txt").path
+        let logPath = IdeviceLogFileManager.logURL.path
 
         guard FileManager.default.fileExists(atPath: logPath) else {
             await MainActor.run {
@@ -380,7 +380,7 @@ struct ConsoleLogsView: View {
         guard !isLoadingLogs else { return }
         isLoadingLogs = true
 
-        let logPath = URL.documentsDirectory.appendingPathComponent("idevice_log.txt").path
+        let logPath = IdeviceLogFileManager.logURL.path
         let previousCount = lastProcessedLineCount
 
         guard FileManager.default.fileExists(atPath: logPath) else {

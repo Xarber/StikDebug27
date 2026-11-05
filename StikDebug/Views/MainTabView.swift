@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Foundation
+import CoreLocation
 
 private enum ExternalLocationAction: Identifiable {
     case simulate(URL, Double, Double)
@@ -318,7 +319,22 @@ struct MainTabView: View {
 
             DispatchQueue.main.async {
                 if code == 0 {
-                    BackgroundLocationManager.shared.requestStart()
+                    LocationSimulationSession.shared.clearRoute()
+                    LocationSimulationSession.shared.startResending(
+                        at: CLLocationCoordinate2D(
+                            latitude: coordinate.latitude,
+                            longitude: coordinate.longitude
+                        )
+                    ) {
+                        LocationSimulationCommandQueue.shared.async {
+                            _ = simulate_location(
+                                DeviceConnectionContext.targetIPAddress,
+                                coordinate.latitude,
+                                coordinate.longitude,
+                                pairingFile.path
+                            )
+                        }
+                    }
                     LogManager.shared.addInfoLog(
                         String(format: "Simulated location from URL: %.6f, %.6f", coordinate.latitude, coordinate.longitude)
                     )
@@ -338,7 +354,7 @@ struct MainTabView: View {
             let code = clear_simulated_location()
             DispatchQueue.main.async {
                 if code == 0 {
-                    BackgroundLocationManager.shared.requestStop()
+                    LocationSimulationSession.shared.stop()
                     LogManager.shared.addInfoLog("Cleared simulated location from URL")
                 } else {
                     showAlert(

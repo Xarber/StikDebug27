@@ -42,6 +42,11 @@ jobs:
       - name: Verify AltSource history preservation
         run: python3 -m unittest discover -s .github/tests -v
 
+      - name: Select newest installed Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest
+
       - name: Show Xcode version
         run: |
           xcodebuild -version

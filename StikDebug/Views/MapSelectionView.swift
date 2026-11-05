@@ -724,11 +724,17 @@ final class LocationSearchCompleter: NSObject, ObservableObject, MKLocalSearchCo
 }
 
 struct LocationSimulationView: View {
+    @ObservedObject private var tunnel = TunnelManager.shared
+    @State private var showConnectedStatus = true
+    @State private var connectionErrorMessage: String?
+    private var isDeviceConnected: Bool {
+        tunnel.isConnected && !tunnel.isStarting && tunnel.lastError == nil && connectionErrorMessage == nil
+    }
+    @ObservedObject private var simulationSession = LocationSimulationSession.shared
     @State private var coordinate: CLLocationCoordinate2D?
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
 
     @State private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
-    @State private var resendTimer: Timer?
     @State private var routeLoadTask: Task<Void, Never>?
     @State private var routeSpeedPrefetchTask: Task<Void, Never>?
     @State private var routePlaybackTask: Task<Void, Never>?
@@ -788,11 +794,11 @@ struct LocationSimulationView: View {
     }
 
     private var hasActiveSimulation: Bool {
-        simulatedCoordinate != nil || routePlaybackTask != nil
+        simulationSession.isActive || simulatedCoordinate != nil || routePlaybackTask != nil
     }
 
     private var isRouteRunning: Bool {
-        routePlaybackTask != nil
+        routePlaybackTask != nil || simulationSession.routeCoordinates != nil
     }
 
     private var hasRouteContext: Bool {
@@ -801,7 +807,12 @@ struct LocationSimulationView: View {
         routePlan != nil ||
         isLoadingRoute ||
         isPrefetchingRouteSpeeds ||
-        routePlaybackCoordinate != nil
+        routePlaybackCoordinate != nil ||
+        simulationSession.routeCoordinates != nil
+    }
+
+    private var displayedRouteCoordinate: CLLocationCoordinate2D? {
+        simulationSession.routeCoordinates == nil ? routePlaybackCoordinate : simulationSession.coordinate
     }
 
     private var routeSummaryText: String? {
@@ -818,6 +829,9 @@ struct LocationSimulationView: View {
     }
 
     private var routeStatusText: String {
+        if simulationSession.routeCoordinates != nil {
+            return "Route simulation active."
+        }
         if isLoadingRoute {
             return "Calculating route…"
         }
@@ -892,8 +906,8 @@ struct LocationSimulationView: View {
                             Marker("End", coordinate: routeEndCoordinate)
                                 .tint(.red)
                         }
-                        if let routePlaybackCoordinate {
-                            Marker("Current", coordinate: routePlaybackCoordinate)
+                        if let displayedRouteCoordinate {
+                            Marker("Current", coordinate: displayedRouteCoordinate)
                                 .tint(.blue)
                         }
                     } else if let coordinate {
@@ -947,6 +961,22 @@ struct LocationSimulationView: View {
                 .padding(.horizontal, 16)
                 .padding(.horizontal, 16)
             }
+        }
+        .safeAreaInset(edge: .top) {
+            if !isDeviceConnected || showConnectedStatus {
+                DeviceConnectionStatusView(errorMessage: connectionErrorMessage)
+                    .padding(12)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal)
+            }
+        }
+        .task(id: isDeviceConnected) {
+            showConnectedStatus = true
+            guard isDeviceConnected else { return }
+            do {
+                try await Task.sleep(for: .seconds(3))
+                showConnectedStatus = false
+            } catch {}
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -1025,17 +1055,28 @@ struct LocationSimulationView: View {
         }
         .onAppear {
             loadBookmarks()
+            if let routeCoordinates = simulationSession.routeCoordinates {
+                coordinate = nil
+                routePolyline = makeRoutePolyline(for: routeCoordinates)
+                routeStartSelection = routeCoordinates.first.map {
+                    RouteSearchSelection(title: "Route Start", coordinate: $0)
+                }
+                routeEndSelection = routeCoordinates.last.map {
+                    RouteSearchSelection(title: "Route End", coordinate: $0)
+                }
+                if let routePolyline {
+                    position = .rect(routePolyline.boundingMapRect)
+                }
+            } else if let activeCoordinate = simulationSession.coordinate {
+                coordinate = activeCoordinate
+                simulatedCoordinate = activeCoordinate
+            }
         }
         .onDisappear {
             routeLoadTask?.cancel()
             routeLoadTask = nil
             routeSpeedPrefetchTask?.cancel()
             routeSpeedPrefetchTask = nil
-            cancelRoutePlayback(resetMarker: true)
-            stopResendLoop()
-            if backgroundTaskID != .invalid {
-                BackgroundLocationManager.shared.requestStop()
-            }
             endBackgroundTask()
         }
     }
@@ -1297,14 +1338,14 @@ struct LocationSimulationView: View {
         ) {
             routePlaybackCoordinate = nil
             beginBackgroundTask()
+            LocationSimulationSession.shared.clearRoute()
             startResendLoop(with: coord)
-            BackgroundLocationManager.shared.requestStart()
         }
     }
 
     private func simulateRoute() {
         guard pairingExists,
-              routePlan != nil,
+              let routePlan,
               let firstCoordinate = routePlaybackSamples.first?.coordinate,
               !isBusy else {
             return
@@ -1319,10 +1360,13 @@ struct LocationSimulationView: View {
             operation: { locationUpdateCode(for: firstCoordinate) }
         ) {
             beginBackgroundTask()
-            BackgroundLocationManager.shared.requestStart()
+            let routeID = LocationSimulationSession.shared.startRoute(
+                at: firstCoordinate,
+                coordinates: routePlan.displayCoordinates
+            )
             simulatedCoordinate = nil
             routePlaybackCoordinate = firstCoordinate
-            startRoutePlayback()
+            startRoutePlayback(routeID: routeID)
         }
     }
 
@@ -1338,10 +1382,12 @@ struct LocationSimulationView: View {
             DispatchQueue.main.async {
                 isBusy = false
                 if code == 0 {
+                    connectionErrorMessage = nil
                     onSuccess()
                 } else {
                     alertTitle = errorTitle
                     alertMessage = errorMessage(code)
+                    connectionErrorMessage = "Code \(code): \(alertMessage)"
                     showAlert = true
                 }
             }
@@ -1356,13 +1402,14 @@ struct LocationSimulationView: View {
         routeSpeedPrefetchTask = nil
         cancelRoutePlayback(resetMarker: true)
         stopResendLoop()
+        LocationSimulationSession.shared.clearRoute()
         runLocationCommand(
             errorTitle: "Clear Failed",
             errorMessage: { code in "Could not clear simulated location (error \(code))." },
             operation: clear_simulated_location
         ) {
             endBackgroundTask()
-            BackgroundLocationManager.shared.requestStop()
+            LocationSimulationSession.shared.stop()
         }
     }
 
@@ -1379,18 +1426,15 @@ struct LocationSimulationView: View {
 
     private func startResendLoop(with coordinate: CLLocationCoordinate2D) {
         simulatedCoordinate = coordinate
-        resendTimer?.invalidate()
-        resendTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { _ in
-            guard let simulatedCoordinate else { return }
+        LocationSimulationSession.shared.startResending(at: coordinate) {
             LocationSimulationCommandQueue.shared.async {
-                _ = locationUpdateCode(for: simulatedCoordinate)
+                _ = locationUpdateCode(for: coordinate)
             }
         }
     }
 
     private func stopResendLoop() {
-        resendTimer?.invalidate()
-        resendTimer = nil
+        LocationSimulationSession.shared.pauseResending()
         simulatedCoordinate = nil
     }
 
@@ -1520,24 +1564,30 @@ struct LocationSimulationView: View {
         }
     }
 
-    private func startRoutePlayback() {
+    private func startRoutePlayback(routeID: UUID) {
         routePlaybackTask = Task {
             var lastSuccessfulCoordinate = routePlaybackSamples.first?.coordinate
 
             for sample in routePlaybackSamples.dropFirst() {
                 try? await Task.sleep(for: .seconds(sample.delayFromPrevious))
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled,
+                      LocationSimulationSession.shared.isCurrentRoute(routeID) else {
+                    return
+                }
 
                 let code = await sendLocationUpdate(for: sample.coordinate)
+                guard LocationSimulationSession.shared.isCurrentRoute(routeID) else { return }
                 guard code == 0 else {
                     await MainActor.run {
                         routePlaybackTask = nil
                         routePlaybackCoordinate = lastSuccessfulCoordinate
+                        LocationSimulationSession.shared.clearRoute()
                         if let lastSuccessfulCoordinate {
                             startResendLoop(with: lastSuccessfulCoordinate)
                         }
                         alertTitle = "Route Simulation Failed"
                         alertMessage = "Could not continue route simulation (error \(code))."
+                        connectionErrorMessage = "Code \(code): Could not continue route simulation."
                         showAlert = true
                     }
                     return
@@ -1546,11 +1596,16 @@ struct LocationSimulationView: View {
                 lastSuccessfulCoordinate = sample.coordinate
                 await MainActor.run {
                     routePlaybackCoordinate = sample.coordinate
+                    LocationSimulationSession.shared.updateCoordinate(sample.coordinate)
                 }
             }
 
             await MainActor.run {
+                guard LocationSimulationSession.shared.isCurrentRoute(routeID) else { return }
                 routePlaybackTask = nil
+                // The route has ended; while it stays set, isRouteRunning keeps
+                // map taps, search, bookmarks and Reset disabled.
+                LocationSimulationSession.shared.clearRoute()
                 if let lastSuccessfulCoordinate {
                     routePlaybackCoordinate = lastSuccessfulCoordinate
                     startResendLoop(with: lastSuccessfulCoordinate)

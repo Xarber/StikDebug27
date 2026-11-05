@@ -17,6 +17,17 @@ struct DeviceConnectionSnapshot: @unchecked Sendable {
     let stikServer: StikServerDeviceTarget?
 
     var isStikServer: Bool { stikServer != nil }
+
+    /// Resolve local developer-service ports on a connection worker, never while rendering a picker.
+    func resolvedTunnelAddresses() -> [Data] {
+        guard !isRemote else { return addresses }
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        let ip = DeviceConnectionContext.targetIPAddress
+        address.sin_port = RemotePairingPortResolver.resolve(targetIPAddress: ip).bigEndian
+        guard ip.withCString({ inet_pton(AF_INET, $0, &address.sin_addr) }) == 1 else { return [] }
+        return [withUnsafeBytes(of: address) { Data($0) }]
+    }
 }
 
 struct StikServerDeviceTarget: Sendable, Equatable {

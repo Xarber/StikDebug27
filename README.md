@@ -24,7 +24,7 @@
 </h6>
 
 ## Features
-- **JIT:** Enable Just In Time compilation for sideloaded apps that have the `get-task-allow` entitlement.
+- **JIT:** Enable Just-In-Time compilation for sideloaded apps that have the `get-task-allow` entitlement.
 - **App Launching:** Launch every app installed on your device.
 - **Console:** Live app and system logs.
 - **Scripts:** Manage automation scripts (mainly used for iOS 26 JIT). 
@@ -58,6 +58,8 @@ When a private StikServer link is saved, StikDebug also advertises its locally p
 | 17.4 – 18.x              | Fully supported      | Stable                                                                |
 | 26.0+              | Supported            | Limited App Availability (Developers need to update their apps to work.) |
 
+See [Officially Supported Apps](SUPPORTED_APPS.md) for the apps supported by the StikDebug team and their bundled scripts.
+
 ## How to Enable JIT
 
 StikDebug enables **JIT** for sideloaded apps on iOS 17.4+ without needing a computer after the initial pairing setup.
@@ -70,18 +72,18 @@ StikDebug enables **JIT** for sideloaded apps on iOS 17.4+ without needing a com
 
 ### Steps
 1. **Obtain a pairing file**  
-   - Detailed guide: [Pairing File Instructions](https://github.com/StikDebug/StikDebug-Guide/blob/main/pairing_file.md) (or ask in Discord).
+   - Detailed guide: [Pairing File Instructions](PAIRING.md) (or ask in Discord).
 
 2. **Set up VPN**  
    - Launch LocalDevVPN and enable the VPN.
 
 4. **Enable JIT for an app**  
-   - Launch StikDebug and tapp the `Enable JIT` button.
+   - Launch StikDebug and tap the `Enable JIT` button.
    - Select your sideloaded app from the list in StikDebug.  
 
 **Troubleshooting**  
 - "Connection dropped" or loopback errors → Check iOS version compatibility / beta warnings.  
-- Heartbeat errors → Ensure that the VPN is on and that you are connecected to Wi-Fi. It may be a pairing file issue.
+- Heartbeat errors → Ensure that the VPN is on and that you are connected to Wi-Fi. It may be a pairing file issue.
 - Pairing file issues → Replace file with device unlocked & trusted.  
 - Still stuck? Join the [Discord](https://discord.gg/ZnNcrRT3M8) with logs/screenshots.
 
@@ -154,7 +156,7 @@ To propose a new feature, open a feature request issue and provide:
 
 ### Code Contributions (Best Practices)
 - Follow normal Swift and SwiftUI style.
-- Write clear and easy to understand code.
+- Write clear and easy-to-understand code.
 - Keep your changes consistent with how the project is already set up.
 - Make sure everything builds and works without errors.
 

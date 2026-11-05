@@ -13,10 +13,6 @@ typealias RsdHandshakeHandle = OpaquePointer
 typealias ImageMounterHandle = OpaquePointer
 typealias LockdowndClientHandle = OpaquePointer
 
-func progressCallback(progress: size_t, total: size_t, context: UnsafeMutableRawPointer?) {
-    MountingProgress.shared.progressCallback(progress: progress, total: total, context: context)
-}
-
 enum MountCheckResult {
     case mounted
     case notMounted
@@ -29,18 +25,25 @@ func isMounted() -> Bool {
 
 func checkMountStatus() -> MountCheckResult {
     do {
-        let result = try JITEnableContext.shared.getMountedDeviceCount()
-        return result > 0 ? .mounted : .notMounted
+        return try JITEnableContext.shared.isDeveloperDiskImageMounted() ? .mounted : .notMounted
     } catch {
+        LogManager.shared.addErrorLog("Failed to check DDI mount status: \(error.localizedDescription)")
         return .unreachable
     }
 }
 
-func mountPersonalDDI(imagePath: String, trustcachePath: String, manifestPath: String) -> String? {
+func mountDeveloperDiskImage(from directoryPath: String) -> String? {
     do {
-        try JITEnableContext.shared.mountPersonalDDI(withImagePath: imagePath, trustcachePath: trustcachePath, manifestPath: manifestPath)
+        if DeveloperDiskImageService.usesCryptexDDI {
+            try JITEnableContext.shared.installCryptexDDI(from: directoryPath)
+        } else {
+            try JITEnableContext.shared.mountPersonalDDI(
+                withImagePath: URL(fileURLWithPath: directoryPath).appendingPathComponent("Image.dmg").path,
+                trustcachePath: URL(fileURLWithPath: directoryPath).appendingPathComponent("Image.dmg.trustcache").path,
+                manifestPath: URL(fileURLWithPath: directoryPath).appendingPathComponent("BuildManifest.plist").path
+            )
+        }
     } catch {
-        LogManager.shared.addErrorLog("Failed to mount DDI: \(error.localizedDescription)")
         return error.localizedDescription
     }
     return nil

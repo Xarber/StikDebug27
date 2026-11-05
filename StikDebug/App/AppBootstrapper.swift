@@ -9,8 +9,9 @@ import UIKit
 
 enum AppBootstrapper {
     static func configure() {
+        IdeviceLogFileManager.shared.prepareForLogging()
         registerDefaultSettings()
-        startConfiguredKeepAliveServices()
+        ensureKeepAliveSelection()
         applyDocumentPickerCopyWorkaround()
     }
 
@@ -27,11 +28,11 @@ enum AppBootstrapper {
         ])
     }
 
-    private static func startConfiguredKeepAliveServices() {
-        guard UserDefaults.standard.bool(forKey: "keepAliveAudio") else {
-            return
+    private static func ensureKeepAliveSelection() {
+        let defaults = UserDefaults.standard
+        if !defaults.bool(forKey: "keepAliveAudio"), !defaults.bool(forKey: "keepAliveLocation") {
+            defaults.set(true, forKey: "keepAliveAudio")
         }
-        BackgroundAudioManager.shared.start()
     }
 
     private static func applyDocumentPickerCopyWorkaround() {

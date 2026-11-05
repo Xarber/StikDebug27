@@ -12,16 +12,15 @@ struct HomeView: View {
     @AppStorage("bundleID") private var bundleID: String = ""
     @AppStorage(UserDefaults.Keys.confirmExternalJITRequests) private var confirmExternalJITRequests = true
 
-    @ObservedObject private var mounting = MountingProgress.shared
-
     @State private var hasAppeared = false
     @State private var pendingJITEnableConfiguration: JITEnableConfiguration?
     @State private var isShowingPairingFilePicker = false
     @State private var debugFeedback: DebugFeedback?
     @State private var pendingExternalURLAction: HomeExternalAction?
+    @State private var pendingLiveContainerApp: JITWarningApp?
+    @State private var pendingStikDebugApp: JITWarningApp?
     @State private var scriptRunModel: RunJSViewModel?
-
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    @State private var isShowingPIDJIT = false
 
     private struct DebugFeedback: Identifiable {
         let id = UUID()
@@ -30,12 +29,23 @@ struct HomeView: View {
         let isWorking: Bool
     }
 
+    private struct JITWarningApp {
+        let bundleID: String
+        let name: String
+    }
+
     var body: some View {
         InstalledAppsListView(onSelectApp: { selectedBundle, selectedName in
-            bundleID = selectedBundle
-            Haptics.medium()
-            startJITInBackground(bundleID: selectedBundle, displayName: selectedName)
-        }, showDoneButton: false, onImportPairingFile: { isShowingPairingFilePicker = true })
+            if selectedBundle == Bundle.main.bundleIdentifier {
+                pendingStikDebugApp = JITWarningApp(bundleID: selectedBundle, name: selectedName)
+            } else if selectedName.localizedCaseInsensitiveContains("LiveContainer") {
+                pendingLiveContainerApp = JITWarningApp(bundleID: selectedBundle, name: selectedName)
+            } else {
+                enableJITForSelectedApp(bundleID: selectedBundle, name: selectedName)
+            }
+        }, onEnableByPID: {
+            isShowingPIDJIT = true
+        }, showDoneButton: false)
         .overlay(alignment: .bottom) {
             if let debugFeedback {
                 debugFeedbackView(debugFeedback)
@@ -45,9 +55,6 @@ struct HomeView: View {
         }
         .onAppear(perform: handleAppear)
         .onReceive(NotificationCenter.default.publisher(for: .intentJSScriptReady), perform: handleScriptReadyNotification)
-        .onReceive(timer) { _ in
-            refreshMountStatusIfNeeded()
-        }
         .onOpenURL { url in
             handleExternalURL(url)
         }
@@ -74,11 +81,60 @@ struct HomeView: View {
         } message: { action in
             Text(action.message)
         }
+        .alert(
+            "Enable JIT for LiveContainer?",
+            isPresented: Binding(
+                get: { pendingLiveContainerApp != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingLiveContainerApp = nil
+                    }
+                }
+            ),
+            presenting: pendingLiveContainerApp
+        ) { app in
+            Button("Cancel", role: .cancel) {
+                pendingLiveContainerApp = nil
+            }
+            Button("Proceed") {
+                pendingLiveContainerApp = nil
+                enableJITForSelectedApp(bundleID: app.bundleID, name: app.name)
+            }
+        } message: { _ in
+            Text("StikDebug isn't meant to enable JIT for LiveContainer manually. Select StikDebug in LiveContainer settings, enable \"Run with JIT\" for your app, then open your app normally. It will automatically jump back here.")
+        }
+        .alert(
+            "Enable JIT for StikDebug?",
+            isPresented: Binding(
+                get: { pendingStikDebugApp != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingStikDebugApp = nil
+                    }
+                }
+            ),
+            presenting: pendingStikDebugApp
+        ) { app in
+            Button("Cancel", role: .cancel) {
+                pendingStikDebugApp = nil
+            }
+            Button("Proceed") {
+                pendingStikDebugApp = nil
+                enableJITForSelectedApp(bundleID: app.bundleID, name: app.name)
+            }
+        } message: { _ in
+            Text("StikDebug isn't meant to attach to itself. Enabling JIT for StikDebug serves no purpose. Select the app you want to enable JIT for instead.")
+        }
         .fileImporter(
             isPresented: $isShowingPairingFilePicker,
             allowedContentTypes: PairingFileStore.supportedContentTypes,
             onCompletion: importPairingFile
         )
+        .sheet(isPresented: $isShowingPIDJIT) {
+            PIDJITConfigurationView { pid, scriptURL in
+                enableJITByPID(pid, scriptURL: scriptURL)
+            }
+        }
         .sheet(item: $scriptRunModel) { model in
             NavigationStack {
                 RunJSView(model: model)
@@ -92,9 +148,38 @@ struct HomeView: View {
         }
     }
 
+    private func enableJITForSelectedApp(bundleID selectedBundle: String, name: String) {
+        bundleID = selectedBundle
+        Haptics.medium()
+        startJITInBackground(bundleID: selectedBundle, displayName: name)
+    }
+
+    private func enableJITByPID(_ pid: Int, scriptURL: URL?) {
+        var scriptData: Data?
+        if let scriptURL {
+            do {
+                scriptData = try Data(contentsOf: scriptURL)
+            } catch {
+                showAlert(
+                    title: "Unable to Read Script",
+                    message: error.localizedDescription,
+                    showOk: true
+                )
+                return
+            }
+        }
+
+        isShowingPIDJIT = false
+        Haptics.medium()
+        startJITInBackground(
+            pid: pid,
+            scriptData: scriptData,
+            scriptName: scriptURL?.lastPathComponent
+        )
+    }
+
     private func handleAppear() {
         startTunnelInBackground()
-        MountingProgress.shared.checkforMounted()
         hasAppeared = true
 
         if let config = pendingJITEnableConfiguration {
@@ -115,13 +200,6 @@ struct HomeView: View {
         }
 
         scriptRunModel = model
-    }
-
-    private func refreshMountStatusIfNeeded() {
-        guard mounting.mountingThread == nil, !mounting.coolisMounted else {
-            return
-        }
-        MountingProgress.shared.checkforMounted()
     }
 
     private func importPairingFile(_ result: Result<URL, Error>) {
@@ -410,6 +488,84 @@ struct HomeView: View {
         let pad = 4 - (base64.count % 4)
         if pad < 4 { base64 += String(repeating: "=", count: pad) }
         return base64
+    }
+}
+
+private struct PIDJITConfigurationView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let onEnable: (Int, URL?) -> Void
+
+    @State private var pidText = ""
+    @State private var selectedScriptURL: URL?
+    @State private var isShowingScriptPicker = false
+
+    private var pid: Int? {
+        guard let value = Int(pidText), value > 0, value <= Int(Int32.max) else {
+            return nil
+        }
+        return value
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Process") {
+                    TextField("PID", text: $pidText)
+                        .keyboardType(.numberPad)
+                    Text("Enter the process identifier of a currently running app.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Script (Optional)") {
+                    LabeledContent(
+                        "Selected Script",
+                        value: selectedScriptURL?.lastPathComponent ?? "None"
+                    )
+
+                    Button(selectedScriptURL == nil ? "Choose Script" : "Change Script") {
+                        isShowingScriptPicker = true
+                    }
+                    .disabled(!ProcessInfo.processInfo.hasTXM)
+
+                    if selectedScriptURL != nil {
+                        Button("Remove Script", role: .destructive) {
+                            selectedScriptURL = nil
+                        }
+                    }
+
+                    if !ProcessInfo.processInfo.hasTXM {
+                        Text("Script execution is disabled on this device.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("Enable JIT by PID")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Enable JIT") {
+                        if let pid {
+                            onEnable(pid, selectedScriptURL)
+                        }
+                    }
+                    .disabled(pid == nil)
+                }
+            }
+            .sheet(isPresented: $isShowingScriptPicker) {
+                ScriptListView { scriptURL in
+                    selectedScriptURL = scriptURL
+                    isShowingScriptPicker = false
+                }
+            }
+        }
     }
 }
 
