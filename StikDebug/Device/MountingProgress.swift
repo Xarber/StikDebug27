@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Combine
 import idevice
 
 final class MountingProgress: ObservableObject {
@@ -20,7 +21,6 @@ final class MountingProgress: ObservableObject {
     private init() {}
 
     func resetForTargetChange() {
-        mountProgress = 0
         coolisMounted = false
     }
 
