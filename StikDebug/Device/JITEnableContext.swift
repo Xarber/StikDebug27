@@ -586,7 +586,7 @@ final class JITEnableContext {
         deviceConditionTargetID = nil
     }
 
-    private func withFreshDebugTunnel<T>(
+    func withFreshDebugTunnel<T>(
         hostname: String,
         target: PairingPlacementTarget? = nil,
         _ body: (OpaquePointer, OpaquePointer) throws -> T

@@ -855,6 +855,7 @@ func simulate_location(_ deviceIP: String, _ latitude: Double, _ longitude: Doub
         }
         if let providerFailure { idevice_error_free(providerFailure) }
         providerFailure = error
+        LocationSimulationState.cleanup()
     }
 
     if let providerFailure {

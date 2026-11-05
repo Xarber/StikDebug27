@@ -153,7 +153,7 @@ func markTunnelDisconnected() {
 }
 
 private func tunnelConnectionLogMessage(for error: NSError) -> String {
-    let target = RemotePairingPortResolver.lastAttemptDescription
+    let target = "\(DeviceConnectionContext.current.displayName) · \(RemotePairingPortResolver.lastAttemptDescription)"
     return "Tunnel connection failed for \(target): \(error.localizedDescription) (Domain: \(error.domain), Code: \(error.code), Raw: \(String(describing: error)))"
 }
 
